@@ -1,0 +1,85 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Laconote",
+  "identifier": "com.laconote.desktop",
+  "version": "0.1.6",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "recording",
+        "title": "Laconote",
+        "width": 360,
+        "height": 480,
+        "minWidth": 320,
+        "minHeight": 380,
+        "resizable": false,
+        "visible": false,
+        "decorations": true,
+        "alwaysOnTop": true,
+        "center": true,
+        "url": "/"
+      },
+      {
+        "label": "settings",
+        "title": "Laconote Settings",
+        "width": 420,
+        "height": 540,
+        "minWidth": 380,
+        "minHeight": 440,
+        "resizable": false,
+        "visible": false,
+        "decorations": true,
+        "alwaysOnTop": false,
+        "center": true,
+        "url": "/#settings"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' https://laconote.com https://*.laconote.com; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://laconote.com https://*.laconote.com; style-src 'self' 'unsafe-inline' https://laconote.com https://*.laconote.com; img-src 'self' data: https: blob:; font-src 'self' data: https://laconote.com https://*.laconote.com; connect-src 'self' https://laconote.com https://*.laconote.com https://meet.laconote.com wss://*.laconote.com"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "entitlements": "entitlements.plist",
+      "exceptionDomain": "localhost",
+      "minimumSystemVersion": "14.2",
+      "infoPlist": "Info.plist"
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "mobile": [],
+      "desktop": {
+        "schemes": [
+          "laconote"
+        ]
+      }
+    },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEExQzU3RTg5RUQ2RkY1RDcKUldUWDlXL3RpWDdGb2F1cUIwcndhbU9FQnU4QmZLMGY5VWp4TUZ3dk5BZmNRK3RHdkMxc0hpNXgK",
+      "endpoints": [
+        "https://github.com/laconote/laconote-desktop/releases/latest/download/latest.json"
+      ],
+      "dialog": true,
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}
