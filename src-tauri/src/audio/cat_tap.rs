@@ -27,6 +27,7 @@ pub enum CaptureReadiness {
     Ready,
     NotReady,
     Unknown,
+    AuthorizedButSilent,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,10 +43,15 @@ extern "C" {
     fn catap_stop();
     fn catap_is_available() -> i32;
     fn catap_macos_version(major: *mut u64, minor: *mut u64, patch: *mut u64);
+    fn catap_probe_permission() -> i32;
 }
 
 pub fn is_available() -> bool {
     unsafe { catap_is_available() != 0 }
+}
+
+pub fn probe_permission() -> bool {
+    unsafe { catap_probe_permission() != 0 }
 }
 
 pub fn macos_version() -> (u64, u64, u64) {
@@ -194,8 +200,8 @@ pub fn probe_capture_readiness(timeout: Duration) -> CaptureProbeResult {
                     detail: "CATap started, but the readiness probe only observed an empty audio frame".into(),
                 },
                 Err(RecvTimeoutError::Timeout) => CaptureProbeResult {
-                    state: CaptureReadiness::Unknown,
-                    detail: "CATap started, but no audio frames arrived before the readiness probe timed out".into(),
+                    state: CaptureReadiness::AuthorizedButSilent,
+                    detail: "CATap started successfully, but no audio frames arrived before the readiness probe timed out (authorized but silent)".into(),
                 },
                 Err(RecvTimeoutError::Disconnected) => CaptureProbeResult {
                     state: CaptureReadiness::NotReady,

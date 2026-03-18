@@ -14,7 +14,7 @@ interface PermissionStatus {
 }
 
 interface SystemAudioProbeResult {
-  state: 'ready' | 'not_ready' | 'unknown';
+  state: 'ready' | 'authorized_but_silent' | 'not_ready' | 'unknown';
   detail: string;
 }
 
@@ -30,12 +30,12 @@ function mergeSystemAudioProbeResult(
     return status;
   }
 
-  if (probe.state === 'ready') {
+  if (probe.state === 'ready' || probe.state === 'authorized_but_silent') {
     return {
       ...status,
       system_audio: 'granted',
       system_audio_status: 'granted',
-      system_audio_capture_ready: 'granted',
+      system_audio_capture_ready: probe.state === 'ready' ? 'granted' : 'not_granted',
     };
   }
 
@@ -274,6 +274,10 @@ export function PermissionOnboarding({ onDone }: PermissionOnboardingProps) {
   };
 
   const systemAudioState = getSystemAudioState(status);
+  const importMeta = import.meta as ImportMeta & { env?: { DEV?: boolean } };
+  const isDevelopment =
+    Boolean(importMeta.env?.DEV) ||
+    ((globalThis as { process?: { env?: { NODE_ENV?: string } } }).process?.env?.NODE_ENV === 'development');
   const allGranted =
     systemAudioState === 'granted' && status?.microphone === 'granted';
 
@@ -311,6 +315,21 @@ export function PermissionOnboarding({ onDone }: PermissionOnboardingProps) {
           secondaryActionLabel={t.permissions.openSettings}
         />
       </div>
+
+      {isDevelopment && (
+        <div
+          style={{
+            background: 'rgba(255, 159, 10, 0.1)',
+            border: '1px solid rgba(255, 159, 10, 0.25)',
+            borderRadius: '8px',
+            padding: '10px 12px',
+          }}
+        >
+          <p style={{ margin: 0, fontSize: '11px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+            {t.permissions.devPermissionResetWarning}
+          </p>
+        </div>
+      )}
 
       {openedScreenSettings && (
         <div

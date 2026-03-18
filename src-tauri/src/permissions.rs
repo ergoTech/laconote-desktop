@@ -73,13 +73,20 @@ fn check_system_audio() -> (PermissionState, PermissionState, PermissionState) {
             )
         }
         CaTapCompatibility::Supported | CaTapCompatibility::Unknown => {
-            let screen_capture_access = if unsafe { CGPreflightScreenCaptureAccess() } {
-                info!("Screen capture access satisfied by CoreGraphics preflight");
-                PermissionState::Granted
-            } else {
-                PermissionState::NotGranted
-            };
-            let system_audio_capture_ready = PermissionState::Unknown;
+            let (screen_capture_access, system_audio_capture_ready) =
+                if unsafe { CGPreflightScreenCaptureAccess() } {
+                    info!("Screen capture access satisfied by CoreGraphics preflight; audio tap implicitly permitted");
+                    (PermissionState::Granted, PermissionState::Granted)
+                } else {
+                    let audio_ready = if crate::audio::probe_catap_permission() {
+                        info!("CATap permission probe succeeded (audio-only permission granted)");
+                        PermissionState::Granted
+                    } else {
+                        info!("CATap permission probe failed; system audio not granted");
+                        PermissionState::NotGranted
+                    };
+                    (PermissionState::NotGranted, audio_ready)
+                };
             let system_audio_status =
                 derive_system_audio_status(&screen_capture_access, &system_audio_capture_ready);
 
@@ -120,7 +127,16 @@ fn check_microphone() -> PermissionState {
 
 fn resolve_system_settings_urls(pane: &str) -> &'static [&'static str] {
     match pane {
-        "system_audio" | "screen_recording" => &[
+        "system_audio" => &[
+            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ListenEvent",
+            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AudioCapture",
+            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ScreenCapture",
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension",
+            "x-apple.systempreferences:com.apple.preference.security?Privacy",
+            "x-apple.systempreferences:com.apple.preference.security",
+        ],
+        "screen_recording" => &[
             "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ScreenCapture",
             "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
             "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension",
@@ -234,8 +250,21 @@ mod tests {
     use super::{derive_system_audio_status, resolve_system_settings_urls, PermissionState};
 
     #[test]
-    fn system_audio_alias_uses_same_settings_urls() {
-        assert_eq!(
+    fn system_audio_urls_include_listen_event_first() {
+        let urls = resolve_system_settings_urls("system_audio");
+        assert!(urls[0].contains("Privacy_ListenEvent"));
+        assert!(urls[1].contains("Privacy_AudioCapture"));
+    }
+
+    #[test]
+    fn screen_recording_urls_start_with_screen_capture() {
+        let urls = resolve_system_settings_urls("screen_recording");
+        assert!(urls[0].contains("Privacy_ScreenCapture"));
+    }
+
+    #[test]
+    fn system_audio_and_screen_recording_urls_differ() {
+        assert_ne!(
             resolve_system_settings_urls("system_audio"),
             resolve_system_settings_urls("screen_recording")
         );
@@ -283,6 +312,22 @@ mod tests {
         assert_eq!(
             derive_system_audio_status(&PermissionState::NotGranted, &PermissionState::NotGranted),
             PermissionState::NotGranted
+        );
+    }
+
+    #[test]
+    fn derived_system_audio_status_granted_for_audio_only_permission() {
+        assert_eq!(
+            derive_system_audio_status(&PermissionState::NotGranted, &PermissionState::Granted),
+            PermissionState::Granted
+        );
+    }
+
+    #[test]
+    fn derived_system_audio_status_granted_for_full_screen_recording() {
+        assert_eq!(
+            derive_system_audio_status(&PermissionState::Granted, &PermissionState::Granted),
+            PermissionState::Granted
         );
     }
 }

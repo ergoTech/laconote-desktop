@@ -131,33 +131,48 @@ pub async fn start_session<R: tauri::Runtime>(
         CaTapCompatibility::Supported => {}
     }
 
-    let system_audio_probe = probe_catap_capture_readiness(std::time::Duration::from_millis(1200));
-    match system_audio_probe.state {
-        CaptureReadiness::Ready => {
-            tracing::info!(detail = %system_audio_probe.detail, "System audio readiness probe succeeded");
+    let audio_already_confirmed = perm_status.system_audio_capture_ready
+        == crate::permissions::PermissionState::Granted;
+
+    if !audio_already_confirmed {
+        let system_audio_probe =
+            probe_catap_capture_readiness(std::time::Duration::from_millis(1200));
+        match system_audio_probe.state {
+            CaptureReadiness::Ready | CaptureReadiness::AuthorizedButSilent => {
+                tracing::info!(detail = %system_audio_probe.detail, "System audio readiness probe succeeded (or authorized but silent)");
+            }
+            CaptureReadiness::Unknown => {
+                tracing::warn!(detail = %system_audio_probe.detail, "System audio readiness probe was inconclusive; continuing with live start");
+            }
+            CaptureReadiness::NotReady => {
+                return Err(format!(
+                    "System audio capture is not ready. {}. Open System Settings → Privacy & Security → Screen & System Audio Recording and verify that Laconote is allowed.",
+                    system_audio_probe.detail
+                ));
+            }
         }
-        CaptureReadiness::Unknown => {
-            tracing::warn!(detail = %system_audio_probe.detail, "System audio readiness probe was inconclusive; continuing with live start");
-        }
-        CaptureReadiness::NotReady => {
-            return Err(format!(
-                "System audio capture is not ready. {}. Open System Settings → Privacy & Security → Screen & System Audio Recording and verify that Laconote is allowed.",
-                system_audio_probe.detail
-            ));
-        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    } else {
+        tracing::info!("System audio permission already confirmed via CATap probe; skipping readiness probe");
     }
 
-    let (sys_rx, system_handle) = start_catap_capture().map_err(|e| {
-        let (major, minor, patch) = catap_macos_version();
-        if matches!(check_catap_compatibility(), CaTapCompatibility::Unknown) {
-            format!(
-                "System audio capture (CATap) failed on macOS {major}.{minor}.{patch} (unverified version). \
-                 Error: {e}. This macOS version may not support CATap."
-            )
-        } else {
-            format!("System audio capture (CATap) failed: {e}")
-        }
-    })?;
+    let (sys_rx, system_handle) = start_catap_capture()
+        .or_else(|first_err| {
+            tracing::warn!(error = %first_err, "CATap start failed, retrying after 300ms");
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            start_catap_capture()
+        })
+        .map_err(|e| {
+            let (major, minor, patch) = catap_macos_version();
+            if matches!(check_catap_compatibility(), CaTapCompatibility::Unknown) {
+                format!(
+                    "System audio capture (CATap) failed on macOS {major}.{minor}.{patch} (unverified version). \
+                     Error: {e}. This macOS version may not support CATap."
+                )
+            } else {
+                format!("System audio capture (CATap) failed: {e}")
+            }
+        })?;
 
     let (mic_rx, mic_handle) = start_mic_capture(config.mic_device).map_err(|e| {
         if e.to_string().contains("permission") || e.to_string().contains("denied") {

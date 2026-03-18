@@ -68,6 +68,7 @@ export const t = {
     someNotGranted: 'Some permissions are missing — recording may not work correctly.',
     restartRequired: 'After granting the permission in System Settings, restart Laconote to apply the change.',
     restartRequiredGranted: 'Permission granted. Please restart Laconote to apply changes.',
+    devPermissionResetWarning: 'Development builds on macOS can lose or misreport System Audio permission after rebuilds. If granting access seems to have no effect, reopen System Settings, grant it again, and restart Laconote.',
     restartApp: 'Restart Laconote',
   },
   shadow: {

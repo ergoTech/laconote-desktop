@@ -154,6 +154,30 @@ int catap_is_available(void) {
     return isAtLeastMacOS14_2() ? 1 : 0;
 }
 
+int catap_probe_permission(void) {
+    if (!isAtLeastMacOS14_2()) return 0;
+    __block int result = 0;
+    dispatch_sync(gTapQueue, ^{
+        @autoreleasepool {
+            if (gTapID != kAudioObjectUnknown) {
+                result = 1;
+                return;
+            }
+            CATapDescription *desc = [[CATapDescription alloc] initStereoGlobalTapButExcludeProcesses:@[]];
+            desc.name = @"LaconotePermissionProbe";
+            desc.privateTap = YES;
+            desc.muteBehavior = CATapUnmuted;
+            AudioObjectID tapID = kAudioObjectUnknown;
+            OSStatus status = AudioHardwareCreateProcessTap(desc, &tapID);
+            if (status == noErr) {
+                AudioHardwareDestroyProcessTap(tapID);
+                result = 1;
+            }
+        }
+    });
+    return result;
+}
+
 void catap_macos_version(uint64_t* major, uint64_t* minor, uint64_t* patch) {
     NSOperatingSystemVersion v = [[NSProcessInfo processInfo] operatingSystemVersion];
     if (major) *major = (uint64_t)v.majorVersion;

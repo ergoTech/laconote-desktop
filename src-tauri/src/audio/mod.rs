@@ -17,6 +17,7 @@ pub use cat_tap::{
     start as start_catap_capture,
     macos_version as catap_macos_version,
     probe_capture_readiness as probe_catap_capture_readiness,
+    probe_permission as probe_catap_permission,
     check_catap_compatibility,
     CaTapHandle, CaTapCompatibility, CaptureError, CaptureProbeResult, CaptureReadiness,
 };
