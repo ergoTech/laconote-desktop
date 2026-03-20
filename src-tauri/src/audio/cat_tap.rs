@@ -74,8 +74,7 @@ pub fn check_catap_compatibility() -> CaTapCompatibility {
     match major {
         0..=13 => CaTapCompatibility::Unsupported,
         14 if minor < 2 => CaTapCompatibility::Unsupported,
-        14 | 15 => CaTapCompatibility::Supported,
-        _ => CaTapCompatibility::Unknown,
+        _ => CaTapCompatibility::Supported,
     }
 }
 

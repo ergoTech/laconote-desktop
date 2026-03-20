@@ -328,6 +328,15 @@ export function PermissionOnboarding({ onDone }: PermissionOnboardingProps) {
           <p style={{ margin: 0, fontSize: '11px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
             {t.permissions.devPermissionResetWarning}
           </p>
+          <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+            <button
+              className="btn btn-secondary"
+              onClick={() => refresh(true)}
+              style={{ fontSize: '11px', padding: '4px 10px' }}
+            >
+              {t.permissions.forceRecheck}
+            </button>
+          </div>
         </div>
       )}
 

@@ -1,5 +1,28 @@
 use serde::{Deserialize, Serialize};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use tracing::{info, warn};
+
+static CATAP_PROBE_CACHE: Mutex<Option<(Instant, bool)>> = Mutex::new(None);
+const CATAP_PROBE_TTL: Duration = Duration::from_secs(10);
+
+fn cached_catap_probe() -> bool {
+    let mut cache = CATAP_PROBE_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((ts, result)) = *cache {
+        if ts.elapsed() < CATAP_PROBE_TTL {
+            info!(cached = result, "Using cached CATap probe result");
+            return result;
+        }
+    }
+    let result = crate::audio::probe_catap_permission();
+    *cache = Some((Instant::now(), result));
+    result
+}
+
+pub fn invalidate_catap_probe_cache() {
+    let mut cache = CATAP_PROBE_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    *cache = None;
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -78,7 +101,7 @@ fn check_system_audio() -> (PermissionState, PermissionState, PermissionState) {
                     info!("Screen capture access satisfied by CoreGraphics preflight; audio tap implicitly permitted");
                     (PermissionState::Granted, PermissionState::Granted)
                 } else {
-                    let audio_ready = if crate::audio::probe_catap_permission() {
+                    let audio_ready = if cached_catap_probe() {
                         info!("CATap permission probe succeeded (audio-only permission granted)");
                         PermissionState::Granted
                     } else {

@@ -254,8 +254,16 @@ pub fn save_token<R: Runtime>(app: AppHandle<R>, token: String) -> Result<(), St
 }
 
 #[tauri::command]
-pub fn check_permissions() -> PermissionStatus {
-    crate::permissions::check_permissions()
+pub async fn check_permissions() -> PermissionStatus {
+    tokio::task::spawn_blocking(|| crate::permissions::check_permissions())
+        .await
+        .unwrap_or_else(|_| PermissionStatus {
+            system_audio_status: crate::permissions::PermissionState::Unknown,
+            system_audio: crate::permissions::PermissionState::Unknown,
+            screen_capture_access: crate::permissions::PermissionState::Unknown,
+            system_audio_capture_ready: crate::permissions::PermissionState::Unknown,
+            microphone: crate::permissions::PermissionState::Unknown,
+        })
 }
 
 #[tauri::command]
@@ -265,15 +273,24 @@ pub fn open_system_settings(pane: String) -> bool {
 }
 
 #[tauri::command]
-pub fn request_mic_permission() -> bool {
+pub async fn request_mic_permission() -> bool {
     info!("Requesting microphone permission");
-    crate::permissions::request_mic_permission()
+    tokio::task::spawn_blocking(|| crate::permissions::request_mic_permission())
+        .await
+        .unwrap_or(false)
 }
 
 #[tauri::command]
-pub fn probe_system_audio_capture() -> crate::audio::CaptureProbeResult {
+pub async fn probe_system_audio_capture() -> crate::audio::CaptureProbeResult {
     info!("Running system audio capture readiness probe");
-    crate::audio::probe_catap_capture_readiness(std::time::Duration::from_millis(1200))
+    tokio::task::spawn_blocking(|| {
+        crate::audio::probe_catap_capture_readiness(std::time::Duration::from_millis(1200))
+    })
+    .await
+    .unwrap_or_else(|_| crate::audio::CaptureProbeResult {
+        state: crate::audio::CaptureReadiness::Unknown,
+        detail: "Permission probe task panicked".into(),
+    })
 }
 
 #[cfg(target_os = "macos")]
