@@ -24,6 +24,7 @@ echo -e "${GREEN}✓ Frontend built successfully${NC}"
 
 echo -e "\n${YELLOW}3. Building Desktop App (Tauri & Rust)...${NC}"
 export PATH="$HOME/.cargo/bin:$PATH"
+export APPLE_SIGNING_IDENTITY="Apple Development: Illia Kostiukevych (XT23UJZ7UF)"
 npm run tauri build
 echo -e "${GREEN}✓ Tauri build completed${NC}"
 
