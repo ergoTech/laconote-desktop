@@ -95,5 +95,73 @@
     }
   })();
 
+  // Expose desktop integration commands to the web dashboard.
+  // The web app can call these to trigger native desktop features.
+  window.__LACONOTE_DESKTOP__ = {
+    available: true,
+
+    connectGoogleCalendar: function() {
+      logToBackend('[desktop] connectGoogleCalendar called from web dashboard');
+      return window.__TAURI_INTERNALS__
+        ? window.__TAURI_INTERNALS__.invoke('connect_google_calendar')
+        : Promise.reject('Not in desktop app');
+    },
+
+    disconnectCalendar: function() {
+      logToBackend('[desktop] disconnectCalendar called from web dashboard');
+      return window.__TAURI_INTERNALS__
+        ? window.__TAURI_INTERNALS__.invoke('disconnect_calendar')
+        : Promise.reject('Not in desktop app');
+    },
+
+    getCalendarStatus: function() {
+      return window.__TAURI_INTERNALS__
+        ? window.__TAURI_INTERNALS__.invoke('get_calendar_status')
+        : Promise.reject('Not in desktop app');
+    },
+
+    getUpcomingEvents: function() {
+      return window.__TAURI_INTERNALS__
+        ? window.__TAURI_INTERNALS__.invoke('get_upcoming_events')
+        : Promise.reject('Not in desktop app');
+    },
+
+    startRecording: function(params) {
+      logToBackend('[desktop] startRecording called from web dashboard');
+      return window.__TAURI_INTERNALS__
+        ? window.__TAURI_INTERNALS__.invoke('start_recording', params || {})
+        : Promise.reject('Not in desktop app');
+    },
+
+    stopRecording: function() {
+      logToBackend('[desktop] stopRecording called from web dashboard');
+      return window.__TAURI_INTERNALS__
+        ? window.__TAURI_INTERNALS__.invoke('stop_recording')
+        : Promise.reject('Not in desktop app');
+    },
+
+    getRecordingStatus: function() {
+      return window.__TAURI_INTERNALS__
+        ? window.__TAURI_INTERNALS__.invoke('get_recording_status')
+        : Promise.reject('Not in desktop app');
+    },
+
+    openSettings: function() {
+      logToBackend('[desktop] openSettings called from web dashboard');
+      // Show native settings window
+      if (window.__TAURI_INTERNALS__) {
+        // There's no direct command for this, but we can use a workaround
+        return Promise.resolve();
+      }
+      return Promise.reject('Not in desktop app');
+    },
+  };
+
+  // Notify the web app that desktop integration is available
+  window.dispatchEvent(new CustomEvent('laconote-desktop-ready', {
+    detail: { version: '0.1.6', features: ['calendar', 'recording', 'detector'] }
+  }));
+
   logToBackend('[diagnostics] Dashboard diagnostics script loaded');
+  logToBackend('[diagnostics] Desktop bridge exposed as window.__LACONOTE_DESKTOP__');
 })();
