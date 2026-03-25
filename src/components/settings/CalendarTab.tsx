@@ -26,6 +26,7 @@ export function CalendarTab() {
   const [status, setStatus] = useState<CalendarStatus | null>(null);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [connecting, setConnecting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const refresh = () => {
     invoke<CalendarStatus>('get_calendar_status').then(setStatus).catch(console.error);
@@ -47,9 +48,12 @@ export function CalendarTab() {
 
   const handleConnect = async () => {
     setConnecting(true);
+    setError(null);
     try {
       await invoke('connect_google_calendar');
+      refresh();
     } catch (err) {
+      setError(String(err));
       console.error(err);
     }
     setConnecting(false);
@@ -91,13 +95,23 @@ export function CalendarTab() {
       </p>
 
       {!status.connected ? (
-        <button
-          className="btn btn-primary"
-          onClick={handleConnect}
-          disabled={connecting}
-        >
-          {connecting ? 'Connecting...' : 'Connect Google Calendar'}
-        </button>
+        <div>
+          <button
+            className="btn btn-primary"
+            onClick={handleConnect}
+            disabled={connecting}
+          >
+            {connecting ? 'Waiting for authorization...' : 'Connect Google Calendar'}
+          </button>
+          {connecting && (
+            <p className="text-secondary" style={{ fontSize: '11px', marginTop: '8px' }}>
+              Complete authorization in your browser, then return here.
+            </p>
+          )}
+          {error && (
+            <p className="text-danger" style={{ fontSize: '11px', marginTop: '8px' }}>{error}</p>
+          )}
+        </div>
       ) : (
         <>
           <div className="settings-row">

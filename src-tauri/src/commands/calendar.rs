@@ -27,43 +27,40 @@ pub fn get_calendar_status<R: Runtime>(app: AppHandle<R>) -> CalendarStatus {
 pub async fn connect_google_calendar<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
     info!("Starting Google Calendar OAuth flow");
     let url = google::build_oauth_url();
+    info!("OAuth URL: opening browser");
     app.opener()
         .open_url(&url, None::<&str>)
         .map_err(|e| format!("Failed to open OAuth URL: {e}"))?;
 
-    // Wait for OAuth callback on localhost in a background thread
-    let app_clone = app.clone();
-    tauri::async_runtime::spawn(async move {
-        let code = tokio::task::spawn_blocking(|| {
-            calendar::oauth_server::wait_for_oauth_code()
-        })
-        .await
-        .map_err(|e| format!("OAuth listener task failed: {e}"))?;
+    // Wait for OAuth callback on localhost — this blocks until user completes auth
+    info!("Waiting for OAuth callback on localhost:19847...");
+    let code = tokio::task::spawn_blocking(|| {
+        calendar::oauth_server::wait_for_oauth_code()
+    })
+    .await
+    .map_err(|e| format!("OAuth listener failed: {e}"))?
+    .map_err(|e| format!("OAuth callback error: {e}"))?;
 
-        let code = code?;
-        info!("OAuth code received, exchanging for tokens");
-        let tokens = google::exchange_code(&code).await?;
-        calendar::scheduler::save_google_tokens(&app_clone, &tokens);
+    info!("OAuth code received, exchanging for tokens");
+    let tokens = google::exchange_code(&code).await?;
+    calendar::scheduler::save_google_tokens(&app, &tokens);
 
-        let mut config = calendar::scheduler::load_config(&app_clone);
-        config.enabled = true;
-        calendar::scheduler::save_config(&app_clone, &config);
+    let mut config = calendar::scheduler::load_config(&app);
+    config.enabled = true;
+    calendar::scheduler::save_config(&app, &config);
 
-        info!("Google Calendar connected successfully");
+    info!("Google Calendar connected successfully");
 
-        use tauri::Emitter;
-        let _ = app_clone.emit("calendar-connected", ());
+    use tauri::Emitter;
+    let _ = app.emit("calendar-connected", ());
 
-        use tauri_plugin_notification::NotificationExt;
-        let _ = app_clone
-            .notification()
-            .builder()
-            .title("Laconote")
-            .body("Google Calendar connected. You'll get reminders before meetings.")
-            .show();
-
-        Ok::<(), String>(())
-    });
+    use tauri_plugin_notification::NotificationExt;
+    let _ = app
+        .notification()
+        .builder()
+        .title("Laconote")
+        .body("Google Calendar connected. You'll get reminders before meetings.")
+        .show();
 
     Ok(())
 }

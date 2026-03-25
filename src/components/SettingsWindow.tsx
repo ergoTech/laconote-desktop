@@ -90,7 +90,7 @@ export function SettingsWindow() {
             className={`tab${activeTab === tab ? ' active' : ''}`}
             onClick={() => setActiveTab(tab)}
           >
-            {tab === 'permissions' ? t.permissions.settingsTab : tab === 'shadow' ? t.shadow.tab : tab === 'calendar' ? 'Calendar' : t.settings[tab as 'audio' | 'account' | 'general']}
+            {tab === 'permissions' ? t.permissions.settingsTab : tab === 'shadow' ? t.shadow.tab : t.settings[tab as 'audio' | 'account' | 'general' | 'calendar']}
           </button>
         ))}
       </div>
