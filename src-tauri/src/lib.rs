@@ -340,8 +340,11 @@ fn register_global_shortcut<R: tauri::Runtime>(
                         }
                     });
                 } else {
-                    info!("Global shortcut: show recording dialog");
-                    tray::show_recording_dialog(&shortcut_handle);
+                    info!("Global shortcut: open dashboard for recording");
+                    let h = shortcut_handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let _ = crate::commands::open_dashboard(h);
+                    });
                 }
             }
         })

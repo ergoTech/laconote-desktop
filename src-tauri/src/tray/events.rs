@@ -6,23 +6,16 @@ use tracing::{info, warn};
 use super::icons::{clear_tray_title, set_tray_recording, set_tray_shadow};
 use super::menu::update_tray_menu;
 use super::shadow_updater::start_shadow_tray_updater;
-use super::windows::{show_recording_dialog, show_settings_window};
+use super::windows::show_settings_window;
 
 pub fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, event_id: &str) {
     match event_id {
         "start-recording" => {
             info!("Menu: Start Recording clicked");
-            let is_authed = crate::auth::keychain::get_token(app)
-                .map(|t| crate::auth::keychain::is_token_valid(&t))
-                .unwrap_or(false);
-            if is_authed {
-                show_recording_dialog(app);
-            } else {
-                let app_handle = app.clone();
-                tauri::async_runtime::spawn(async move {
-                    let _ = crate::commands::open_dashboard(app_handle);
-                });
-            }
+            let app_handle = app.clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = crate::commands::open_dashboard(app_handle);
+            });
         }
         "stop-recording" => {
             info!("Menu: Stop Recording clicked");
@@ -162,7 +155,7 @@ fn handle_shadow_menu_event<R: Runtime>(app: &AppHandle<R>, event_id: &str) {
                             }
                             set_tray_recording(&app_handle, false).ok();
                             update_tray_menu(&app_handle).ok();
-                            show_recording_dialog(&app_handle);
+                            let _ = crate::commands::open_dashboard(app_handle.clone());
                             info!("Shadow Save & Record complete: {meeting_id}");
                         }
                         Err(e) => {

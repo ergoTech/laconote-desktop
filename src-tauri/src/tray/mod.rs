@@ -14,7 +14,6 @@ pub use icons::{clear_tray_title as clear_tray_title_pub, set_tray_recording, se
 pub use menu::update_tray_menu;
 #[cfg(target_os = "macos")]
 pub use shadow_updater::start_shadow_tray_updater;
-pub use windows::show_recording_dialog;
 
 pub fn setup_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let idle_icon = icons::load_icon(app, "tray-idle")?;

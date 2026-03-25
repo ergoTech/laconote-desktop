@@ -26,10 +26,6 @@ fn show_or_focus_window<R: Runtime>(app: &AppHandle<R>, label: &str) {
     }
 }
 
-pub fn show_recording_dialog<R: Runtime>(app: &AppHandle<R>) {
-    show_or_focus_window(app, "recording");
-}
-
 pub fn show_settings_window<R: Runtime>(app: &AppHandle<R>) {
     show_or_focus_window(app, "settings");
 }

@@ -13,20 +13,6 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "label": "recording",
-        "title": "Laconote",
-        "width": 360,
-        "height": 480,
-        "minWidth": 320,
-        "minHeight": 380,
-        "resizable": false,
-        "visible": false,
-        "decorations": true,
-        "alwaysOnTop": true,
-        "center": true,
-        "url": "/"
-      },
-      {
         "label": "settings",
         "title": "Laconote Settings",
         "width": 520,
