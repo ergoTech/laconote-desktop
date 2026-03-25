@@ -101,7 +101,6 @@ pub fn run() {
             commands::set_shadow_buffer_duration,
             commands::get_calendar_status,
             commands::connect_google_calendar,
-            commands::handle_calendar_callback,
             commands::disconnect_calendar,
             commands::set_calendar_config,
             commands::get_upcoming_events,

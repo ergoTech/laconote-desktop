@@ -28,8 +28,6 @@ pub fn handle_deep_link<R: Runtime>(app: &AppHandle<R>, raw_url: &str) {
 
     if host == AUTH_CALLBACK_HOST && path == AUTH_CALLBACK_PATH {
         handle_auth_callback(app, &parsed);
-    } else if host == "calendar" && path == "/callback" {
-        handle_calendar_callback(app, &parsed);
     } else {
         warn!("Unhandled deep link path: {host}{path}");
     }
@@ -89,45 +87,6 @@ fn notify_auth_success<R: Runtime>(app: &AppHandle<R>, token: String) {
         .title("Laconote")
         .body("You are now signed in. Click the menu bar icon to start recording.")
         .show();
-}
-
-fn handle_calendar_callback<R: Runtime>(app: &AppHandle<R>, url: &Url) {
-    let code = url
-        .query_pairs()
-        .find(|(k, _)| k == "code")
-        .map(|(_, v)| v.into_owned());
-
-    let Some(code) = code else {
-        warn!("Calendar callback missing 'code' query parameter");
-        return;
-    };
-
-    info!("Calendar OAuth callback received, exchanging code");
-    let app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        match crate::calendar::google::exchange_code(&code).await {
-            Ok(tokens) => {
-                crate::calendar::scheduler::save_google_tokens(&app, &tokens);
-                let mut config = crate::calendar::scheduler::load_config(&app);
-                config.enabled = true;
-                crate::calendar::scheduler::save_config(&app, &config);
-
-                info!("Google Calendar connected via deep link");
-                let _ = app.emit("calendar-connected", ());
-
-                use tauri_plugin_notification::NotificationExt;
-                let _ = app
-                    .notification()
-                    .builder()
-                    .title("Laconote")
-                    .body("Google Calendar connected. You'll get reminders before meetings.")
-                    .show();
-            }
-            Err(e) => {
-                warn!("Calendar OAuth code exchange failed: {e}");
-            }
-        }
-    });
 }
 
 #[cfg(test)]

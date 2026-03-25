@@ -30,24 +30,41 @@ pub async fn connect_google_calendar<R: Runtime>(app: AppHandle<R>) -> Result<()
     app.opener()
         .open_url(&url, None::<&str>)
         .map_err(|e| format!("Failed to open OAuth URL: {e}"))?;
-    Ok(())
-}
 
-#[tauri::command]
-pub async fn handle_calendar_callback<R: Runtime>(
-    app: AppHandle<R>,
-    code: String,
-) -> Result<(), String> {
-    info!("Processing Google Calendar OAuth callback");
-    let tokens = google::exchange_code(&code).await?;
-    calendar::scheduler::save_google_tokens(&app, &tokens);
+    // Wait for OAuth callback on localhost in a background thread
+    let app_clone = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let code = tokio::task::spawn_blocking(|| {
+            calendar::oauth_server::wait_for_oauth_code()
+        })
+        .await
+        .map_err(|e| format!("OAuth listener task failed: {e}"))?;
 
-    // Enable calendar by default after connecting
-    let mut config = calendar::scheduler::load_config(&app);
-    config.enabled = true;
-    calendar::scheduler::save_config(&app, &config);
+        let code = code?;
+        info!("OAuth code received, exchanging for tokens");
+        let tokens = google::exchange_code(&code).await?;
+        calendar::scheduler::save_google_tokens(&app_clone, &tokens);
 
-    info!("Google Calendar connected successfully");
+        let mut config = calendar::scheduler::load_config(&app_clone);
+        config.enabled = true;
+        calendar::scheduler::save_config(&app_clone, &config);
+
+        info!("Google Calendar connected successfully");
+
+        use tauri::Emitter;
+        let _ = app_clone.emit("calendar-connected", ());
+
+        use tauri_plugin_notification::NotificationExt;
+        let _ = app_clone
+            .notification()
+            .builder()
+            .title("Laconote")
+            .body("Google Calendar connected. You'll get reminders before meetings.")
+            .show();
+
+        Ok::<(), String>(())
+    });
+
     Ok(())
 }
 

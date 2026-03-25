@@ -9,9 +9,9 @@ const GOOGLE_CALENDAR_API: &str = "https://www.googleapis.com/calendar/v3";
 
 // These would normally be in a config/env, but for a desktop app they're embedded
 // (Google OAuth for installed apps uses PKCE, so client_secret is not truly secret)
-const GOOGLE_CLIENT_ID: &str = "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com";
-const GOOGLE_CLIENT_SECRET: &str = "YOUR_GOOGLE_CLIENT_SECRET";
-const GOOGLE_REDIRECT_URI: &str = "laconote://calendar/callback";
+const GOOGLE_CLIENT_ID: &str = "REDACTED_GOOGLE_CLIENT_ID";
+const GOOGLE_CLIENT_SECRET: &str = "REDACTED_GOOGLE_CLIENT_SECRET";
+const GOOGLE_REDIRECT_URI: &str = "http://localhost:19847/calendar/callback";
 const GOOGLE_SCOPE: &str = "https://www.googleapis.com/auth/calendar.readonly";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
