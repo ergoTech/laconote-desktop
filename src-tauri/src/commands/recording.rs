@@ -25,12 +25,22 @@ pub async fn start_recording<R: Runtime>(
 
     #[cfg(target_os = "macos")]
     {
+        // Atomic guard: prevent concurrent start_recording calls
+        if state.starting.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return Err("Recording is already starting".to_string());
+        }
+
+        // Check if already recording
         {
             let guard = state
                 .session
                 .lock()
-                .map_err(|_| "Session lock poisoned".to_string())?;
+                .map_err(|_| {
+                    state.starting.store(false, std::sync::atomic::Ordering::SeqCst);
+                    "Session lock poisoned".to_string()
+                })?;
             if guard.is_some() {
+                state.starting.store(false, std::sync::atomic::Ordering::SeqCst);
                 return Err("Already recording".to_string());
             }
         }
@@ -39,8 +49,12 @@ pub async fn start_recording<R: Runtime>(
             let guard = state
                 .shadow_session
                 .lock()
-                .map_err(|_| "Shadow session lock poisoned".to_string())?;
+                .map_err(|_| {
+                    state.starting.store(false, std::sync::atomic::Ordering::SeqCst);
+                    "Shadow session lock poisoned".to_string()
+                })?;
             if guard.is_some() {
+                state.starting.store(false, std::sync::atomic::Ordering::SeqCst);
                 return Err("Shadow recording is active. Use Save & Record to transition.".to_string());
             }
         }
@@ -79,6 +93,7 @@ pub async fn start_recording<R: Runtime>(
         let session = crate::recording::start_session(&app, config, notify_tx, existing_meeting_id)
             .await
             .map_err(|e| {
+                state.starting.store(false, std::sync::atomic::Ordering::SeqCst);
                 if e.contains("Not authenticated") || e.contains("Session expired") {
                     use tauri::Emitter;
                     info!("Auth error during start_recording, clearing token");
@@ -100,6 +115,7 @@ pub async fn start_recording<R: Runtime>(
         crate::tray::set_tray_recording(&app, true).ok();
         crate::tray::update_tray_menu(&app).ok();
 
+        state.starting.store(false, std::sync::atomic::Ordering::SeqCst);
         info!("Recording started: {meeting_id}");
         Ok(meeting_id)
     }
