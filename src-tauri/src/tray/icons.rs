@@ -41,7 +41,9 @@ pub fn set_tray_recording<R: Runtime>(
         };
         let icon = load_icon(app, icon_name)?;
         tray.set_icon(Some(icon))?;
-        info!("Tray icon updated: recording={}", is_recording);
+        // Template mode: ON for idle (adaptive B/W), OFF for recording (show red dot)
+        tray.set_icon_as_template(!is_recording)?;
+        info!("Tray icon updated: recording={}, template={}", is_recording, !is_recording);
     }
     Ok(())
 }
