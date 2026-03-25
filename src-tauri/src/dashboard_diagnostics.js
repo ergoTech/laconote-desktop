@@ -157,6 +157,37 @@
     },
   };
 
+  // Listen for recording state changes from Rust backend
+  (function setupRecordingStateSync() {
+    if (!window.__TAURI_INTERNALS__) return;
+    try {
+      // Listen for recording-state-changed events (emitted on start/stop)
+      var cb = window.__TAURI_INTERNALS__.transformCallback(function(event) {
+        var payload = event.payload || event;
+        window.__LACONOTE_RECORDING_STATUS__ = payload;
+        window.dispatchEvent(new CustomEvent('laconote-recording-state', { detail: payload }));
+      });
+      window.__TAURI_INTERNALS__.invoke('plugin:event|listen', {
+        event: 'recording-state-changed',
+        target: { kind: 'Any' },
+        handler: cb
+      });
+
+      // Check initial recording state RIGHT NOW (on page load/refresh)
+      window.__TAURI_INTERNALS__.invoke('get_recording_status').then(function(status) {
+        window.__LACONOTE_RECORDING_STATUS__ = status;
+        window.dispatchEvent(new CustomEvent('laconote-recording-state', { detail: status }));
+        if (status.is_recording) {
+          logToBackend('[diagnostics] Page loaded with active recording: ' + status.duration_seconds + 's');
+        }
+      }).catch(function() {});
+
+      logToBackend('[diagnostics] Recording state sync registered');
+    } catch(e) {
+      logToBackend('[diagnostics] Recording state sync failed: ' + e.message);
+    }
+  })();
+
   // Notify the web app that desktop integration is available
   window.dispatchEvent(new CustomEvent('laconote-desktop-ready', {
     detail: { version: '0.1.6', features: ['calendar', 'recording', 'detector'] }

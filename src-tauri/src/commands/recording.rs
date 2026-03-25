@@ -115,6 +115,17 @@ pub async fn start_recording<R: Runtime>(
         crate::tray::set_tray_recording(&app, true).ok();
         crate::tray::update_tray_menu(&app).ok();
 
+        // Notify web dashboard that recording state changed
+        {
+            use tauri::Emitter;
+            let status = RecordingStatus {
+                is_recording: true,
+                duration_seconds: 0,
+                chunks_uploaded: 0,
+            };
+            let _ = app.emit("recording-state-changed", &status);
+        }
+
         state.starting.store(false, std::sync::atomic::Ordering::SeqCst);
         info!("Recording started: {meeting_id}");
         Ok(meeting_id)
@@ -145,6 +156,17 @@ pub async fn stop_recording<R: Runtime>(
                 s.stop();
                 crate::tray::set_tray_recording(&app, false).ok();
                 crate::tray::update_tray_menu(&app).ok();
+
+                // Notify web dashboard that recording stopped
+                {
+                    use tauri::Emitter;
+                    let status = RecordingStatus {
+                        is_recording: false,
+                        duration_seconds: 0,
+                        chunks_uploaded: 0,
+                    };
+                    let _ = app.emit("recording-state-changed", &status);
+                }
 
                 info!("Recording stopped: {meeting_id}");
                 Ok(meeting_id)
