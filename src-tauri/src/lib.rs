@@ -38,6 +38,13 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::default().build())
         .plugin(tauri_plugin_deep_link::init())
         .manage(AppState::default())
+        .on_window_event(|window, event| {
+            // Hide all windows on close instead of destroying — they can be reopened from tray
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .setup(|app| {
             let handle = app.handle().clone();
 
