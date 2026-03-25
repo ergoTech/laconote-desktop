@@ -5,8 +5,8 @@ use tracing::info;
 #[cfg(target_os = "macos")]
 use crate::audio::{
     start_catap_capture, start_mic_capture, start_mixer,
-    check_catap_compatibility, catap_macos_version, probe_catap_capture_readiness,
-    CaTapCompatibility, CaptureReadiness, CaTapHandle, HealthMonitor,
+    check_catap_compatibility, catap_macos_version,
+    CaTapCompatibility, CaTapHandle, HealthMonitor,
     MicCaptureHandle, MixerConfig, MixerHandle,
 };
 #[cfg(target_os = "macos")]
@@ -105,25 +105,28 @@ pub async fn start_session<R: tauri::Runtime>(
 
     let meeting_id = existing_meeting_id.unwrap_or_else(|| Uuid::new_v4().to_string());
     let meeting_start_time = Utc::now();
+    let (major, minor, patch) = catap_macos_version();
+    let dev_hint = if cfg!(debug_assertions) {
+        " In dev mode, permissions may reset after rebuild — re-grant and restart the app."
+    } else {
+        ""
+    };
 
+    // Step 1: Check permissions
+    info!("Step 1/6: Checking permissions (macOS {major}.{minor}.{patch})");
     let perm_status = crate::permissions::check_permissions();
     if perm_status.microphone != crate::permissions::PermissionState::Granted {
-        let (major, minor, patch) = catap_macos_version();
-        let dev_hint = if cfg!(debug_assertions) {
-            " In dev mode, permissions may reset after rebuild — re-grant and restart the app."
-        } else {
-            ""
-        };
         return Err(format!(
             "Microphone permission is not granted on macOS {major}.{minor}.{patch}. \
              Please enable it in System Settings -> Privacy & Security -> Microphone.{dev_hint}"
         ));
     }
 
+    // Step 2: Check CATap compatibility
+    info!("Step 2/6: Checking CATap compatibility");
     let compat = check_catap_compatibility();
     match compat {
         CaTapCompatibility::Unsupported => {
-            let (major, minor, _) = catap_macos_version();
             return Err(format!(
                 "System audio capture requires macOS 14.2 or later. \
                  Current version: {major}.{minor}. \
@@ -131,74 +134,84 @@ pub async fn start_session<R: tauri::Runtime>(
             ));
         }
         CaTapCompatibility::Unknown => {
-            let (major, minor, patch) = catap_macos_version();
             tracing::warn!(
                 major, minor, patch,
                 "Unknown macOS version — CATap compatibility unverified, attempting anyway"
             );
         }
-        CaTapCompatibility::Supported => {}
+        CaTapCompatibility::Supported => {
+            info!("CATap compatible (macOS {major}.{minor}.{patch})");
+        }
     }
 
+    // Step 3: Probe system audio permission (lightweight — no full CATap lifecycle)
+    info!("Step 3/6: Probing system audio permission");
     let audio_already_confirmed = perm_status.system_audio_capture_ready
         == crate::permissions::PermissionState::Granted;
 
     if !audio_already_confirmed {
-        let system_audio_probe =
-            probe_catap_capture_readiness(std::time::Duration::from_millis(1200));
-        match system_audio_probe.state {
-            CaptureReadiness::Ready | CaptureReadiness::AuthorizedButSilent => {
-                tracing::info!(detail = %system_audio_probe.detail, "System audio readiness probe succeeded (or authorized but silent)");
-            }
-            CaptureReadiness::Unknown => {
-                tracing::warn!(detail = %system_audio_probe.detail, "System audio readiness probe was inconclusive; continuing with live start");
-            }
-            CaptureReadiness::NotReady => {
-                let (major, minor, patch) = catap_macos_version();
-                let dev_hint = if cfg!(debug_assertions) {
-                    " In dev mode, permissions reset after each rebuild — re-grant and restart."
-                } else {
-                    ""
-                };
-                return Err(format!(
-                    "System audio capture is not ready on macOS {major}.{minor}.{patch}. \
-                     {}. Open System Settings -> Privacy & Security -> Screen & System Audio Recording \
-                     and verify that Laconote is allowed.{dev_hint}",
-                    system_audio_probe.detail
-                ));
-            }
+        crate::permissions::invalidate_catap_probe_cache();
+        let probe_ok = crate::audio::probe_catap_permission();
+        if !probe_ok {
+            let diagnostic = crate::audio::catap_last_diagnostic();
+            let detail = if diagnostic.is_empty() {
+                "permission probe returned false".to_string()
+            } else {
+                diagnostic
+            };
+            return Err(format!(
+                "System audio capture permission not granted on macOS {major}.{minor}.{patch}: {detail}. \
+                 Open System Settings -> Privacy & Security -> Screen & System Audio Recording \
+                 and verify that Laconote is allowed.{dev_hint}"
+            ));
         }
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        info!("System audio permission probe succeeded");
+        std::thread::sleep(std::time::Duration::from_millis(100));
     } else {
-        tracing::info!("System audio permission already confirmed via CATap probe; skipping readiness probe");
-        std::thread::sleep(std::time::Duration::from_millis(150));
+        info!("System audio permission already confirmed; skipping probe");
+        std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
     crate::permissions::invalidate_catap_probe_cache();
 
-    let (sys_rx, system_handle) = start_catap_capture()
-        .or_else(|first_err| {
-            tracing::warn!(error = %first_err, "CATap start failed, retrying after 300ms");
-            std::thread::sleep(std::time::Duration::from_millis(300));
-            start_catap_capture()
-        })
-        .map_err(|e| {
-            let (major, minor, patch) = catap_macos_version();
-            let dev_hint = if cfg!(debug_assertions) {
-                " You are running a development build — macOS may have reset permissions after the last rebuild. \
-                 Re-grant permission in System Settings and restart the app."
-            } else {
-                ""
-            };
+    // Step 4: Start CATap system audio capture (with retries)
+    info!("Step 4/6: Starting CATap system audio capture");
+    let (sys_rx, system_handle) = {
+        let retry_delays = [0u64, 500, 1000];
+        let mut last_err = String::new();
+        let mut result = None;
+        for (attempt, delay_ms) in retry_delays.iter().enumerate() {
+            if *delay_ms > 0 {
+                tracing::warn!(attempt, delay_ms, error = %last_err, "CATap start failed, retrying");
+                std::thread::sleep(std::time::Duration::from_millis(*delay_ms));
+            }
+            match start_catap_capture() {
+                Ok(handles) => {
+                    if attempt > 0 {
+                        info!(attempt, "CATap start succeeded on retry");
+                    }
+                    result = Some(handles);
+                    break;
+                }
+                Err(e) => {
+                    last_err = e.to_string();
+                }
+            }
+        }
+        result.ok_or_else(|| {
             format!(
-                "System audio capture (CATap) failed on macOS {major}.{minor}.{patch}: {e}. \
-                 Open System Settings -> Privacy & Security -> Screen & System Audio Recording \
+                "System audio capture (CATap) failed after 3 attempts on macOS {major}.{minor}.{patch}: \
+                 {last_err}. Open System Settings -> Privacy & Security -> Screen & System Audio Recording \
                  and verify that Laconote is allowed.{dev_hint}"
             )
-        })?;
+        })?
+    };
 
+    // Step 5: Start microphone capture
+    info!("Step 5/6: Starting microphone capture");
     let (mic_rx, mic_handle) = start_mic_capture(config.mic_device).map_err(|e| {
-        if e.to_string().contains("permission") || e.to_string().contains("denied") {
+        let e_str = e.to_string();
+        if e_str.contains("permission") || e_str.contains("denied") {
             format!(
                 "Microphone access denied. Open System Settings → Privacy & Security → Microphone and enable Laconote."
             )
@@ -207,6 +220,8 @@ pub async fn start_session<R: tauri::Runtime>(
         }
     })?;
 
+    // Step 6: Start audio mixer and encoder pipeline
+    info!("Step 6/6: Starting audio mixer and encoder pipeline");
     let (mixer_consumer, mixer_handle) = start_mixer(sys_rx, mic_rx, MixerConfig::default())
         .map_err(|e| format!("Audio mixer failed: {e}"))?;
 

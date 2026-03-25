@@ -10,6 +10,8 @@ pub mod encoder;
 pub mod silence;
 #[cfg(target_os = "macos")]
 pub mod health;
+#[cfg(target_os = "macos")]
+pub mod util;
 
 #[cfg(target_os = "macos")]
 pub use cat_tap::{
@@ -18,6 +20,7 @@ pub use cat_tap::{
     macos_version as catap_macos_version,
     probe_capture_readiness as probe_catap_capture_readiness,
     probe_permission as probe_catap_permission,
+    last_diagnostic as catap_last_diagnostic,
     check_catap_compatibility,
     CaTapHandle, CaTapCompatibility, CaptureError, CaptureProbeResult, CaptureReadiness,
 };

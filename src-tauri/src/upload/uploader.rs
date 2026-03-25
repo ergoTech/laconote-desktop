@@ -4,11 +4,10 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tracing::{info, warn};
 
-const API_BASE_URL: &str = "https://meet.laconote.com";
-const UPLOAD_TIMEOUT_SECS: u64 = 30;
-const MAX_RETRIES: u32 = 5;
-const BASE_DELAY_SECS: u64 = 1;
-const MAX_DELAY_SECS: u64 = 30;
+use crate::config::{
+    API_BASE_URL, BASE_RETRY_DELAY_SECS, MAX_RETRY_DELAY_SECS, MAX_UPLOAD_RETRIES,
+    UPLOAD_TIMEOUT_SECS,
+};
 
 /// A single speaker segment as required by the API's `speakers` JSON field.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,7 +70,7 @@ impl Uploader {
     /// Returns [`Err`] only after all retries are exhausted.
     pub async fn upload_chunk(&self, req: &ChunkRequest) -> Result<UploadResult, String> {
         let mut attempt = 0u32;
-        let mut delay = BASE_DELAY_SECS;
+        let mut delay = BASE_RETRY_DELAY_SECS;
 
         loop {
             match self.try_upload_once(req).await {
@@ -85,7 +84,7 @@ impl Uploader {
                     );
                     return Ok(result);
                 }
-                Err(e) if attempt < MAX_RETRIES => {
+                Err(e) if attempt < MAX_UPLOAD_RETRIES => {
                     warn!(
                         meeting_id = %req.meeting_id,
                         attempt,
@@ -94,12 +93,12 @@ impl Uploader {
                         "Chunk upload failed, retrying"
                     );
                     tokio::time::sleep(Duration::from_secs(delay)).await;
-                    delay = (delay * 2).min(MAX_DELAY_SECS);
+                    delay = (delay * 2).min(MAX_RETRY_DELAY_SECS);
                     attempt += 1;
                 }
                 Err(e) => {
                     return Err(format!(
-                        "Upload failed after {MAX_RETRIES} retries: {e}"
+                        "Upload failed after {MAX_UPLOAD_RETRIES} retries: {e}"
                     ));
                 }
             }

@@ -1,30 +1,40 @@
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { LazyStore } from '@tauri-apps/plugin-store';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useAuth } from '../hooks/useAuth';
+import { getStore } from '../hooks/useStore';
 import { t, MEETING_TYPES, MeetingType } from '../i18n';
 import { PermissionOnboarding } from './PermissionOnboarding';
+import type { AudioDiagnostic, Project } from '../types';
 
 const API_BASE = 'https://meet.laconote.com';
-const store = new LazyStore('app-settings.json');
-
-interface Project {
-  project_id: string;
-  project_name: string;
-}
-
-interface AuthStatus {
-  is_authenticated: boolean;
-  user_email: string | null;
-}
+const store = getStore();
 
 interface RecordingDialogProps {
   onAuthChange?: (isAuthenticated: boolean) => void;
 }
 
+function isAuthError(err: string): boolean {
+  const lower = err.toLowerCase();
+  return lower.includes('not authenticated') ||
+    lower.includes('session expired') ||
+    lower.includes('log in') ||
+    lower.includes('401') ||
+    lower.includes('unauthorized');
+}
+
+function isSystemAudioError(err: string): boolean {
+  const lower = err.toLowerCase();
+  return lower.includes('catap') || lower.includes('system audio') || lower.includes('osstatus');
+}
+
+function isPermissionError(err: string): boolean {
+  const lower = err.toLowerCase();
+  return lower.includes('permission') || lower.includes('denied');
+}
+
 export function RecordingDialog({ onAuthChange }: RecordingDialogProps = {}) {
-  const [auth, setAuth] = useState<AuthStatus | null>(null);
+  const { auth, refresh: refreshAuth } = useAuth({ pollWhenUnauthenticated: true });
   const [meetingName, setMeetingName] = useState('');
   const [meetingType, setMeetingType] = useState<MeetingType>('general');
   const [projectId, setProjectId] = useState<string>('');
@@ -34,49 +44,26 @@ export function RecordingDialog({ onAuthChange }: RecordingDialogProps = {}) {
   const [error, setError] = useState<string | null>(null);
   const [permissionsChecked, setPermissionsChecked] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [diagnostic, setDiagnostic] = useState<AudioDiagnostic | null>(null);
+  const [showDiagnostic, setShowDiagnostic] = useState(false);
+  const wasUnauthRef = useRef(false);
 
   useEffect(() => {
-    invoke<AuthStatus>('get_auth_status').then(setAuth).catch(console.error);
-  }, []);
-
-  // Update window title based on auth state
-  useEffect(() => {
-    if (auth === null) return; // loading
+    if (auth === null) return;
     const title = auth.is_authenticated ? 'Start Recording' : 'Laconote — Log In';
     getCurrentWindow().setTitle(title).catch(console.error);
-  }, [auth]);
 
-  // Listen for push notifications from Rust (deep link auth success)
-  useEffect(() => {
-    let unlisten: () => void;
-    listen('auth-changed', () => {
-      invoke<AuthStatus>('get_auth_status').then((a) => {
-        setAuth(a);
-        if (a.is_authenticated) {
-          getCurrentWindow().show().catch(console.error);
-          getCurrentWindow().setFocus().catch(console.error);
-          if (onAuthChange) onAuthChange(true);
-        }
-      }).catch(console.error);
-    }).then(u => { unlisten = u; });
-    return () => { if (unlisten) unlisten(); };
-  }, [onAuthChange]);
-
-  useEffect(() => {
-    if (auth?.is_authenticated) return;
-    const id = setInterval(() => {
-      invoke<AuthStatus>('get_auth_status').then((a) => {
-        setAuth(a);
-        if (a.is_authenticated) {
-          // Show and focus the window now that the user is authenticated
-          getCurrentWindow().show().catch(console.error);
-          getCurrentWindow().setFocus().catch(console.error);
-          if (onAuthChange) onAuthChange(true);
-        }
-      }).catch(console.error);
-    }, 2000);
-    return () => clearInterval(id);
-  }, [auth?.is_authenticated, onAuthChange]);
+    if (!auth.is_authenticated) {
+      wasUnauthRef.current = true;
+      return;
+    }
+    if (wasUnauthRef.current) {
+      wasUnauthRef.current = false;
+      getCurrentWindow().show().catch(console.error);
+      getCurrentWindow().setFocus().catch(console.error);
+      if (onAuthChange) onAuthChange(true);
+    }
+  }, [auth, onAuthChange]);
 
   useEffect(() => {
     if (!auth?.is_authenticated) return;
@@ -115,21 +102,35 @@ export function RecordingDialog({ onAuthChange }: RecordingDialogProps = {}) {
     setLoadingProjects(true);
     invoke<string | null>('get_token')
       .then((token) => {
-        if (!token) return [];
+        if (!token) {
+          void refreshAuth();
+          return [];
+        }
         return fetch(`${API_BASE}/api/v1/projects`, {
           headers: { Authorization: `Bearer ${token}` },
-        })
-          .then((r) => r.json())
-          .then((data: { projects?: Project[] }) => data.projects ?? []);
+        }).then((r) => {
+          if (r.status === 401) {
+            invoke('logout').then(() => refreshAuth()).catch(console.error);
+            return [];
+          }
+          return r.json().then((data: { projects?: Project[] }) => data.projects ?? []);
+        });
       })
       .then((list) => {
         setProjects(list);
         setLoadingProjects(false);
       })
       .catch(() => setLoadingProjects(false));
-  }, [auth]);
+  }, [auth, refreshAuth]);
 
   const handleLogin = () => {
+    invoke('login').catch(console.error);
+  };
+
+  const handleReLogin = async () => {
+    setError(null);
+    await invoke('logout').catch(console.error);
+    await refreshAuth();
     invoke('login').catch(console.error);
   };
 
@@ -152,15 +153,19 @@ export function RecordingDialog({ onAuthChange }: RecordingDialogProps = {}) {
       });
       await getCurrentWindow().hide();
     } catch (err) {
-      setError(String(err));
+      const errStr = String(err);
+      setError(errStr);
       setStarting(false);
+      if (isAuthError(errStr)) {
+        void refreshAuth();
+      }
     }
   };
 
   if (!auth) {
     return (
-      <div className="view" style={{ justifyContent: 'center' }}>
-        <p style={{ color: 'var(--text-secondary)', textAlign: 'center' }}>Loading…</p>
+      <div className="view view--centered">
+        <p className="text-secondary text-center">Loading…</p>
       </div>
     );
   }
@@ -184,8 +189,8 @@ export function RecordingDialog({ onAuthChange }: RecordingDialogProps = {}) {
 
   if (!permissionsChecked) {
     return (
-      <div className="view" style={{ justifyContent: 'center' }}>
-        <p style={{ color: 'var(--text-secondary)', textAlign: 'center' }}>Loading…</p>
+      <div className="view view--centered">
+        <p className="text-secondary text-center">Loading…</p>
       </div>
     );
   }
@@ -236,23 +241,72 @@ export function RecordingDialog({ onAuthChange }: RecordingDialogProps = {}) {
       </div>
 
       {error && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-          <p style={{ color: 'var(--danger)', fontSize: '12px', margin: 0 }}>{error}</p>
-          {(error.toLowerCase().includes('permission') ||
-            error.toLowerCase().includes('denied')) && (
-              <button
-                className="btn btn-secondary"
-                style={{ alignSelf: 'flex-start', fontSize: '11px', padding: '3px 8px' }}
-                onClick={() => {
-                  const pane = error.toLowerCase().includes('microphone')
-                    ? 'microphone'
-                    : 'system_audio';
-                  invoke('open_system_settings', { pane }).catch(console.error);
-                }}
-              >
-                {t.recording.openSettings}
-              </button>
-            )}
+        <div className="flex-col gap-4">
+          <p className="text-danger m-0" style={{ fontSize: '12px' }}>{error}</p>
+          {isAuthError(error) ? (
+            <button
+              className="btn btn-primary btn-xs self-start"
+              onClick={handleReLogin}
+            >
+              {t.recording.loginAgain}
+            </button>
+          ) : (
+            <>
+              {isPermissionError(error) && (
+                <button
+                  className="btn btn-secondary btn-xs self-start"
+                  onClick={() => {
+                    const pane = error.toLowerCase().includes('microphone')
+                      ? 'microphone'
+                      : 'system_audio';
+                    invoke('open_system_settings', { pane }).catch(console.error);
+                  }}
+                >
+                  {t.recording.openSettings}
+                </button>
+              )}
+              {(isSystemAudioError(error) || isPermissionError(error)) && (
+                <button
+                  className="btn btn-secondary btn-xs self-start"
+                  style={{ fontSize: '11px' }}
+                  onClick={() => {
+                    if (!showDiagnostic) {
+                      invoke<AudioDiagnostic>('get_audio_diagnostic')
+                        .then(setDiagnostic)
+                        .catch(console.error);
+                    }
+                    setShowDiagnostic(!showDiagnostic);
+                  }}
+                >
+                  {showDiagnostic ? 'Hide diagnostic' : 'Show diagnostic'}
+                </button>
+              )}
+              {showDiagnostic && diagnostic && (
+                <div style={{ fontSize: '11px', background: 'var(--bg-secondary, #f5f5f5)', padding: '8px', borderRadius: '6px', fontFamily: 'monospace' }}>
+                  <div>macOS: {diagnostic.macos_version}</div>
+                  <div>CATap available: {String(diagnostic.catap_available)}</div>
+                  <div>CATap permission: {String(diagnostic.catap_permission_probe)}</div>
+                  <div>Screen capture: {String(diagnostic.screen_capture_preflight)}</div>
+                  <div>Mic authorized: {String(diagnostic.mic_authorized)}</div>
+                  <div>Dev build: {String(diagnostic.is_dev_build)}</div>
+                  {diagnostic.last_catap_error && (
+                    <div style={{ color: 'var(--danger, #ff3b30)', marginTop: '4px' }}>
+                      Last error: {diagnostic.last_catap_error}
+                    </div>
+                  )}
+                  <button
+                    className="btn btn-secondary btn-xs"
+                    style={{ fontSize: '10px', marginTop: '4px' }}
+                    onClick={() => {
+                      navigator.clipboard.writeText(JSON.stringify(diagnostic, null, 2)).catch(console.error);
+                    }}
+                  >
+                    Copy to clipboard
+                  </button>
+                </div>
+              )}
+            </>
+          )}
         </div>
       )}
 

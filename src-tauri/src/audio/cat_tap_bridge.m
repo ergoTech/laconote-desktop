@@ -6,17 +6,56 @@
 #import <AppKit/AppKit.h>
 #include <string.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 typedef void (*LacoCATapCallback)(const float* samples, int count, int channels, void* user_data);
 
 static CATapDescription *gTapDesc = nil;
 static AudioObjectID gTapID = kAudioObjectUnknown;
+static AudioObjectID gAggregateDeviceID = kAudioObjectUnknown;
 static AudioDeviceIOProcID gIOProcID = NULL;
 static LacoCATapCallback gCallback = NULL;
 static void* gUserData = NULL;
 
 static dispatch_queue_t gTapQueue = NULL;
 static BOOL gVersionLogged = NO;
+static NSString *gLastDiagnostic = nil;
+
+/// Decodes an OSStatus into a human-readable string.
+static NSString* describeOSStatus(OSStatus status) {
+    switch (status) {
+        case noErr:           return @"noErr (0)";
+        case -50:             return @"paramErr (-50): Invalid parameter";
+        case -10867:          return @"kAudioHardwareBadObjectError (-10867): Invalid AudioObjectID";
+        case -10878:          return @"kAudioHardwareNotRunningError (-10878): Hardware not running";
+        case -10863:          return @"kAudioHardwareUnspecifiedError (-10863): Unspecified error";
+        case -10851:          return @"kAudioHardwareUnsupportedOperationError (-10851): Unsupported operation";
+        case -10861:          return @"kAudioDevicePermissionsError (-10861): Permission denied";
+        case -10862:          return @"kAudioHardwareIllegalOperationError (-10862): Illegal operation";
+        case -10866:          return @"kAudioHardwareBadDeviceError (-10866): Bad device";
+        default: {
+            char fourCC[5] = {0};
+            fourCC[0] = (char)((status >> 24) & 0xFF);
+            fourCC[1] = (char)((status >> 16) & 0xFF);
+            fourCC[2] = (char)((status >> 8) & 0xFF);
+            fourCC[3] = (char)(status & 0xFF);
+            BOOL printable = YES;
+            for (int i = 0; i < 4; i++) {
+                if (fourCC[i] < 32 || fourCC[i] > 126) { printable = NO; break; }
+            }
+            if (printable) {
+                return [NSString stringWithFormat:@"'%s' (%d)", fourCC, (int)status];
+            }
+            return [NSString stringWithFormat:@"unknown (%d)", (int)status];
+        }
+    }
+}
+
+/// Returns the last diagnostic message from catap_start (C string, valid until next call).
+const char* catap_last_diagnostic(void) {
+    if (gLastDiagnostic == nil) return "";
+    return [gLastDiagnostic UTF8String];
+}
 
 __attribute__((constructor))
 static void initTapQueue(void) {
@@ -59,64 +98,128 @@ static OSStatus ioProc(
     return noErr;
 }
 
+static void catap_cleanup_locked(void) {
+    if (gIOProcID != NULL && gAggregateDeviceID != kAudioObjectUnknown) {
+        AudioDeviceStop(gAggregateDeviceID, gIOProcID);
+        AudioDeviceDestroyIOProcID(gAggregateDeviceID, gIOProcID);
+        gIOProcID = NULL;
+    }
+    if (gAggregateDeviceID != kAudioObjectUnknown) {
+        AudioHardwareDestroyAggregateDevice(gAggregateDeviceID);
+        gAggregateDeviceID = kAudioObjectUnknown;
+    }
+    if (gTapID != kAudioObjectUnknown) {
+        AudioHardwareDestroyProcessTap(gTapID);
+        gTapID = kAudioObjectUnknown;
+    }
+    gTapDesc = nil;
+    gCallback = NULL;
+    gUserData = NULL;
+}
+
 int catap_start(LacoCATapCallback callback, void* user_data) {
     if (!isAtLeastMacOS14_2()) {
+        gLastDiagnostic = @"macOS version < 14.2, CATap not available";
         return -100;
     }
     __block int result = 0;
     dispatch_sync(gTapQueue, ^{
         @autoreleasepool {
             logMacOSVersion();
+            NSOperatingSystemVersion v = [[NSProcessInfo processInfo] operatingSystemVersion];
 
-            if (gTapID != kAudioObjectUnknown) { result = -1; return; }
+            if (gTapID != kAudioObjectUnknown) {
+                gLastDiagnostic = @"CATap already active (gTapID != kAudioObjectUnknown)";
+                NSLog(@"[Laconote CATap] Start rejected: tap already active, tapID=%u", (unsigned)gTapID);
+                result = -1;
+                return;
+            }
 
             gCallback = callback;
             gUserData = user_data;
 
+            // Step 1: Create CATapDescription
+            NSLog(@"[Laconote CATap] Step 1/5: Creating CATapDescription (stereo global tap, private, unmuted)");
             gTapDesc = [[CATapDescription alloc] initStereoGlobalTapButExcludeProcesses:@[]];
             gTapDesc.name = @"LaconoteCATap";
             gTapDesc.privateTap = YES;
             gTapDesc.muteBehavior = CATapUnmuted;
 
+            // Step 2: Create Process Tap
+            NSLog(@"[Laconote CATap] Step 2/5: Calling AudioHardwareCreateProcessTap...");
             OSStatus status = AudioHardwareCreateProcessTap(gTapDesc, &gTapID);
             if (status != noErr) {
-                NSOperatingSystemVersion v = [[NSProcessInfo processInfo] operatingSystemVersion];
-                NSLog(@"[Laconote CATap] AudioHardwareCreateProcessTap failed: %d on macOS %ld.%ld.%ld — check System Audio permission in System Settings → Privacy & Security → Screen Recording",
-                      (int)status, (long)v.majorVersion, (long)v.minorVersion, (long)v.patchVersion);
-                gTapDesc = nil;
-                gCallback = NULL;
-                gUserData = NULL;
+                gLastDiagnostic = [NSString stringWithFormat:
+                    @"AudioHardwareCreateProcessTap failed: %@ on macOS %ld.%ld.%ld. "
+                    @"This usually means System Audio Recording permission is not granted. "
+                    @"Open System Settings → Privacy & Security → Screen & System Audio Recording.",
+                    describeOSStatus(status), (long)v.majorVersion, (long)v.minorVersion, (long)v.patchVersion];
+                NSLog(@"[Laconote CATap] Step 2 FAILED: %@", gLastDiagnostic);
+                catap_cleanup_locked();
                 result = (int)status;
                 return;
             }
+            NSLog(@"[Laconote CATap] Step 2/5: Process tap created, tapID=%u", (unsigned)gTapID);
 
-            status = AudioDeviceCreateIOProcID(gTapID, ioProc, NULL, &gIOProcID);
+            // Step 3: Get tap UUID and create aggregate device
+            NSString *tapUID = [[gTapDesc UUID] UUIDString];
+            NSLog(@"[Laconote CATap] Step 3/5: Creating aggregate device with tap UUID=%@", tapUID);
+
+            NSArray *taps = @[@{
+                @kAudioSubTapUIDKey: tapUID,
+                @kAudioSubTapDriftCompensationKey: @YES,
+            }];
+            NSDictionary *aggProps = @{
+                @kAudioAggregateDeviceNameKey: @"LaconoteAggregateDevice",
+                @kAudioAggregateDeviceUIDKey: @"com.laconote.aggregate",
+                @kAudioAggregateDeviceTapListKey: taps,
+                @kAudioAggregateDeviceTapAutoStartKey: @NO,
+                @kAudioAggregateDeviceIsPrivateKey: @YES,
+            };
+
+            status = AudioHardwareCreateAggregateDevice((__bridge CFDictionaryRef)aggProps, &gAggregateDeviceID);
             if (status != noErr) {
-                NSLog(@"[Laconote CATap] AudioDeviceCreateIOProcID failed: %d", (int)status);
-                AudioHardwareDestroyProcessTap(gTapID);
-                gTapID = kAudioObjectUnknown;
-                gTapDesc = nil;
-                gCallback = NULL;
-                gUserData = NULL;
+                gLastDiagnostic = [NSString stringWithFormat:
+                    @"AudioHardwareCreateAggregateDevice failed: %@ on macOS %ld.%ld.%ld",
+                    describeOSStatus(status), (long)v.majorVersion, (long)v.minorVersion, (long)v.patchVersion];
+                NSLog(@"[Laconote CATap] Step 3 FAILED: %@", gLastDiagnostic);
+                catap_cleanup_locked();
                 result = (int)status;
                 return;
             }
+            NSLog(@"[Laconote CATap] Step 3/5: Aggregate device created, deviceID=%u", (unsigned)gAggregateDeviceID);
 
-            status = AudioDeviceStart(gTapID, gIOProcID);
+            // Step 4: Create IOProc on aggregate device
+            NSLog(@"[Laconote CATap] Step 4/5: Creating IOProc on aggregate device...");
+            status = AudioDeviceCreateIOProcID(gAggregateDeviceID, ioProc, NULL, &gIOProcID);
             if (status != noErr) {
-                NSLog(@"[Laconote CATap] AudioDeviceStart failed: %d", (int)status);
-                AudioDeviceDestroyIOProcID(gTapID, gIOProcID);
-                gIOProcID = NULL;
-                AudioHardwareDestroyProcessTap(gTapID);
-                gTapID = kAudioObjectUnknown;
-                gTapDesc = nil;
-                gCallback = NULL;
-                gUserData = NULL;
+                gLastDiagnostic = [NSString stringWithFormat:
+                    @"AudioDeviceCreateIOProcID failed: %@ (aggregateDeviceID=%u) on macOS %ld.%ld.%ld",
+                    describeOSStatus(status), (unsigned)gAggregateDeviceID,
+                    (long)v.majorVersion, (long)v.minorVersion, (long)v.patchVersion];
+                NSLog(@"[Laconote CATap] Step 4 FAILED: %@", gLastDiagnostic);
+                catap_cleanup_locked();
                 result = (int)status;
                 return;
             }
 
-            NSLog(@"[Laconote CATap] Started successfully, tapID=%u", (unsigned)gTapID);
+            // Step 5: Start aggregate device
+            NSLog(@"[Laconote CATap] Step 5/5: Starting aggregate device...");
+            status = AudioDeviceStart(gAggregateDeviceID, gIOProcID);
+            if (status != noErr) {
+                gLastDiagnostic = [NSString stringWithFormat:
+                    @"AudioDeviceStart failed: %@ (aggregateDeviceID=%u) on macOS %ld.%ld.%ld",
+                    describeOSStatus(status), (unsigned)gAggregateDeviceID,
+                    (long)v.majorVersion, (long)v.minorVersion, (long)v.patchVersion];
+                NSLog(@"[Laconote CATap] Step 5 FAILED: %@", gLastDiagnostic);
+                catap_cleanup_locked();
+                result = (int)status;
+                return;
+            }
+
+            gLastDiagnostic = nil;
+            NSLog(@"[Laconote CATap] All 5 steps succeeded — tapID=%u, aggregateDeviceID=%u, audio capture active",
+                  (unsigned)gTapID, (unsigned)gAggregateDeviceID);
             result = 0;
         }
     });
@@ -127,25 +230,35 @@ void catap_stop(void) {
     if (!isAtLeastMacOS14_2()) return;
     dispatch_sync(gTapQueue, ^{
         @autoreleasepool {
+            NSLog(@"[Laconote CATap] Stopping — tapID=%u, aggregateDeviceID=%u",
+                  (unsigned)gTapID, (unsigned)gAggregateDeviceID);
+
+            if (gIOProcID != NULL && gAggregateDeviceID != kAudioObjectUnknown) {
+                OSStatus s1 = AudioDeviceStop(gAggregateDeviceID, gIOProcID);
+                if (s1 != noErr) NSLog(@"[Laconote CATap] AudioDeviceStop(aggregate) failed: %@", describeOSStatus(s1));
+
+                OSStatus s2 = AudioDeviceDestroyIOProcID(gAggregateDeviceID, gIOProcID);
+                if (s2 != noErr) NSLog(@"[Laconote CATap] AudioDeviceDestroyIOProcID(aggregate) failed: %@", describeOSStatus(s2));
+
+                gIOProcID = NULL;
+            }
+
+            if (gAggregateDeviceID != kAudioObjectUnknown) {
+                OSStatus s3 = AudioHardwareDestroyAggregateDevice(gAggregateDeviceID);
+                if (s3 != noErr) NSLog(@"[Laconote CATap] AudioHardwareDestroyAggregateDevice failed: %@", describeOSStatus(s3));
+                gAggregateDeviceID = kAudioObjectUnknown;
+            }
+
             if (gTapID != kAudioObjectUnknown) {
-                if (gIOProcID != NULL) {
-                    OSStatus s1 = AudioDeviceStop(gTapID, gIOProcID);
-                    if (s1 != noErr) NSLog(@"[Laconote CATap] AudioDeviceStop failed: %d", (int)s1);
-
-                    OSStatus s2 = AudioDeviceDestroyIOProcID(gTapID, gIOProcID);
-                    if (s2 != noErr) NSLog(@"[Laconote CATap] AudioDeviceDestroyIOProcID failed: %d", (int)s2);
-
-                    gIOProcID = NULL;
-                }
-                OSStatus s3 = AudioHardwareDestroyProcessTap(gTapID);
-                if (s3 != noErr) NSLog(@"[Laconote CATap] AudioHardwareDestroyProcessTap failed: %d", (int)s3);
-
-                NSLog(@"[Laconote CATap] Stopped, tapID=%u", (unsigned)gTapID);
+                OSStatus s4 = AudioHardwareDestroyProcessTap(gTapID);
+                if (s4 != noErr) NSLog(@"[Laconote CATap] AudioHardwareDestroyProcessTap failed: %@", describeOSStatus(s4));
                 gTapID = kAudioObjectUnknown;
             }
+
             gTapDesc = nil;
             gCallback = NULL;
             gUserData = NULL;
+            NSLog(@"[Laconote CATap] Stopped successfully");
         }
     });
 }
@@ -160,6 +273,7 @@ int catap_probe_permission(void) {
     dispatch_sync(gTapQueue, ^{
         @autoreleasepool {
             if (gTapID != kAudioObjectUnknown) {
+                NSLog(@"[Laconote CATap] Permission probe: tap already active, returning granted");
                 result = 1;
                 return;
             }
@@ -171,7 +285,14 @@ int catap_probe_permission(void) {
             OSStatus status = AudioHardwareCreateProcessTap(desc, &tapID);
             if (status == noErr) {
                 AudioHardwareDestroyProcessTap(tapID);
+                usleep(50000); // 50ms — let Core Audio fully release the tap
+                NSLog(@"[Laconote CATap] Permission probe: succeeded (tap created and destroyed)");
                 result = 1;
+            } else {
+                gLastDiagnostic = [NSString stringWithFormat:
+                    @"Permission probe failed: %@", describeOSStatus(status)];
+                NSLog(@"[Laconote CATap] Permission probe: FAILED — %@", gLastDiagnostic);
+                result = 0;
             }
         }
     });
@@ -185,12 +306,46 @@ void catap_macos_version(uint64_t* major, uint64_t* minor, uint64_t* patch) {
     if (patch) *patch = (uint64_t)v.patchVersion;
 }
 
+// Forward declaration (defined below)
+int request_mic_authorization_sync(void);
+
+/// Functional probe: actually tries to open the default mic input.
+/// Returns 1 if the microphone can be accessed, 0 otherwise.
+/// This is reliable regardless of TCC cache / code-signing mismatches.
+static int probe_mic_access(void) {
+    AVCaptureDevice *mic = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeAudio];
+    if (!mic) {
+        NSLog(@"[Laconote Mic] probe_mic_access: no default audio capture device found");
+        return 0;
+    }
+    NSError *error = nil;
+    AVCaptureDeviceInput *input = [AVCaptureDeviceInput deviceInputWithDevice:mic error:&error];
+    if (input && !error) {
+        NSLog(@"[Laconote Mic] probe_mic_access: functional probe succeeded (device=%@)", mic.localizedName);
+        return 1;
+    }
+    NSLog(@"[Laconote Mic] probe_mic_access: functional probe failed (device=%@, error=%@)", mic.localizedName, error);
+    return 0;
+}
+
 /// Returns 1 if microphone access is authorized, 0 otherwise.
-/// Uses AVCaptureDevice.authorizationStatus which reads the cached TCC state
-/// without opening any audio streams or triggering new TCC IPC requests.
+/// Uses AVAudioApplication (macOS 14+) which correctly reflects the Microphone
+/// privacy toggle, unlike the legacy AVCaptureDevice API on macOS 15+.
+/// Falls back to a functional probe when the API reports Denied or Undetermined
+/// (the TCC status can be stale or unreliable after rebuilds).
 int check_mic_authorization(void) {
-    AVAuthorizationStatus status = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio];
-    return (status == AVAuthorizationStatusAuthorized) ? 1 : 0;
+    AVAudioApplication *audioApp = [AVAudioApplication sharedInstance];
+    AVAudioApplicationRecordPermission perm = [audioApp recordPermission];
+
+    NSLog(@"[Laconote Mic] check_mic_authorization: AVAudioApplication.recordPermission=%ld", (long)perm);
+
+    if (perm == AVAudioApplicationRecordPermissionGranted) {
+        return 1;
+    }
+    int probeResult = probe_mic_access();
+    NSLog(@"[Laconote Mic] check_mic_authorization: recordPermission=%ld, probeResult=%d → returning %d",
+          (long)perm, probeResult, probeResult);
+    return probeResult;
 }
 
 /// Opens a URL using NSWorkspace (proper macOS API, no subprocess spawning).
@@ -215,22 +370,65 @@ int open_url_nsworkspace(const char* url_cstr) {
     return opened ? 1 : 0;
 }
 
-/// Requests microphone access via AVFoundation and blocks until the user responds.
+/// Requests microphone access and blocks until the user responds or a
+/// 30-second timeout elapses. Uses AVCaptureDevice API which triggers
+/// the macOS TCC permission dialog when status is undetermined.
+/// The caller is responsible for activation policy management.
 /// Returns 1 if granted, 0 otherwise.
 int request_mic_authorization_sync(void) {
-    AVAuthorizationStatus current = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio];
-    if (current == AVAuthorizationStatusAuthorized) {
+    AVAudioApplication *audioApp = [AVAudioApplication sharedInstance];
+    AVAudioApplicationRecordPermission perm = [audioApp recordPermission];
+    NSLog(@"[Laconote Mic] request_mic_authorization_sync: recordPermission=%ld", (long)perm);
+
+    if (perm == AVAudioApplicationRecordPermissionGranted) {
         return 1;
     }
-    if (current == AVAuthorizationStatusDenied || current == AVAuthorizationStatusRestricted) {
+    if (perm == AVAudioApplicationRecordPermissionDenied) {
+        NSLog(@"[Laconote Mic] Permission denied, user must enable in System Settings.");
         return 0;
     }
+    NSLog(@"[Laconote Mic] Permission undetermined, requesting access via AVCaptureDevice...");
+
     dispatch_semaphore_t sema = dispatch_semaphore_create(0);
     __block BOOL granted = NO;
     [AVCaptureDevice requestAccessForMediaType:AVMediaTypeAudio completionHandler:^(BOOL g) {
+        NSLog(@"[Laconote Mic] requestAccess completionHandler: granted=%d", g);
         granted = g;
         dispatch_semaphore_signal(sema);
     }];
-    dispatch_semaphore_wait(sema, DISPATCH_TIME_FOREVER);
+    dispatch_semaphore_wait(sema, dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC));
+
+    NSLog(@"[Laconote Mic] request_mic_authorization_sync result: granted=%d", granted);
     return granted ? 1 : 0;
+}
+
+/// Switches the app to Accessory activation policy (hides dock icon).
+/// Called from Rust after mic permission has been resolved.
+void set_accessory_policy(void) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+        NSLog(@"[Laconote] Switched to Accessory activation policy (dock icon hidden)");
+    });
+}
+
+void request_mic_then_set_accessory(void) {
+    AVAudioApplication *audioApp = [AVAudioApplication sharedInstance];
+    AVAudioApplicationRecordPermission perm = [audioApp recordPermission];
+    NSLog(@"[Laconote Mic] request_mic_then_set_accessory: recordPermission=%ld", (long)perm);
+
+    if (perm == AVAudioApplicationRecordPermissionGranted ||
+        perm == AVAudioApplicationRecordPermissionDenied) {
+        NSLog(@"[Laconote Mic] Permission already resolved (%ld), setting accessory policy immediately",
+              (long)perm);
+        set_accessory_policy();
+        return;
+    }
+
+    NSLog(@"[Laconote Mic] Permission undetermined, requesting access before hiding dock icon...");
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [AVCaptureDevice requestAccessForMediaType:AVMediaTypeAudio completionHandler:^(BOOL granted) {
+            NSLog(@"[Laconote Mic] requestAccess completionHandler: granted=%d, now hiding dock icon", granted);
+            set_accessory_policy();
+        }];
+    });
 }

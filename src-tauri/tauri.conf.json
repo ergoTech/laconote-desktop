@@ -42,7 +42,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' https://laconote.com https://*.laconote.com; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://laconote.com https://*.laconote.com; style-src 'self' 'unsafe-inline' https://laconote.com https://*.laconote.com; img-src 'self' data: https: blob:; font-src 'self' data: https://laconote.com https://*.laconote.com; connect-src 'self' https://laconote.com https://*.laconote.com https://meet.laconote.com wss://*.laconote.com"
+      "csp": "default-src 'self' https://laconote.com https://*.laconote.com; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://laconote.com https://*.laconote.com; style-src 'self' 'unsafe-inline' https://laconote.com https://*.laconote.com; img-src 'self' data: https: blob:; font-src 'self' data: https://laconote.com https://*.laconote.com; media-src 'self' blob: mediastream: https://laconote.com https://*.laconote.com; connect-src 'self' blob: https://laconote.com https://*.laconote.com https://meet.laconote.com wss://*.laconote.com"
     }
   },
   "bundle": {

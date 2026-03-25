@@ -7,18 +7,35 @@ const KEYCHAIN_SERVICE: &str = "com.laconote.desktop";
 const KEYCHAIN_ACCOUNT: &str = "jwt-token";
 
 pub fn store_token<R: Runtime>(app: &AppHandle<R>, jwt: &str) -> Result<(), String> {
+    // Always save to file first — keychain is unreliable on macOS Tahoe.
+    // The keyring readback within the same Entry instance returns a cached value,
+    // but a NEW Entry instance cannot find the item. So we cannot trust keychain alone.
+    store_token_to_file(app, jwt)?;
+
+    // Also try keychain (best-effort) for apps that read from it directly
     match keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT) {
         Ok(entry) => {
             if let Err(e) = entry.set_password(jwt) {
-                warn!("Failed to store token in keychain: {e}, falling back to token.txt");
-                store_token_to_file(app, jwt)?;
+                warn!("Failed to store token in keychain (file fallback used): {e}");
             } else {
-                info!("JWT stored securely in macOS Keychain");
+                // Verify with a SEPARATE Entry to catch macOS Tahoe phantom writes
+                match keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT) {
+                    Ok(verify_entry) => match verify_entry.get_password() {
+                        Ok(readback) if readback == jwt => {
+                            info!("JWT stored in keychain (cross-entry verified) + token.txt");
+                        }
+                        _ => {
+                            warn!("Keychain cross-entry readback failed — macOS Tahoe keychain bug. Using token.txt only.");
+                        }
+                    },
+                    Err(_) => {
+                        warn!("Keychain cross-entry verify failed. Using token.txt only.");
+                    }
+                }
             }
         }
         Err(e) => {
-            warn!("Failed to create keychain entry: {e}, falling back to token.txt");
-            store_token_to_file(app, jwt)?;
+            warn!("Failed to create keychain entry (file fallback used): {e}");
         }
     }
     Ok(())
@@ -37,22 +54,24 @@ fn store_token_to_file<R: Runtime>(app: &AppHandle<R>, jwt: &str) -> Result<(), 
 }
 
 pub fn get_token<R: Runtime>(app: &AppHandle<R>) -> Option<String> {
-    match keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT) {
-        Ok(entry) => match entry.get_password() {
-            Ok(token) => {
-                debug!("JWT retrieved from macOS Keychain");
-                Some(token)
-            }
-            Err(_) => migrate_token_from_file(app),
-        },
-        Err(e) => {
-            warn!("Failed to initialize keychain entry: {e}");
-            migrate_token_from_file(app)
+    if let Some(token) = get_token_from_keyring() {
+        return Some(token);
+    }
+    get_token_from_file(app)
+}
+
+fn get_token_from_keyring() -> Option<String> {
+    let entry = keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT).ok()?;
+    match entry.get_password() {
+        Ok(token) => {
+            debug!("JWT retrieved from macOS Keychain");
+            Some(token)
         }
+        Err(_) => None,
     }
 }
 
-fn migrate_token_from_file<R: Runtime>(app: &AppHandle<R>) -> Option<String> {
+fn get_token_from_file<R: Runtime>(app: &AppHandle<R>) -> Option<String> {
     let dir = app.path().app_data_dir().ok()?;
     let path = dir.join("token.txt");
     if !path.exists() {
@@ -63,17 +82,7 @@ fn migrate_token_from_file<R: Runtime>(app: &AppHandle<R>) -> Option<String> {
     if token.is_empty() {
         return None;
     }
-    if let Ok(entry) = keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT) {
-        if entry.set_password(&token).is_ok() {
-            if let Err(e) = fs::remove_file(&path) {
-                warn!("Failed to remove legacy token.txt after migration: {e}");
-            } else {
-                info!("JWT migrated from token.txt to macOS Keychain");
-            }
-        } else {
-            warn!("Failed to migrate token to keychain, keeping token.txt");
-        }
-    }
+    debug!("JWT retrieved from fallback token.txt");
     Some(token)
 }
 

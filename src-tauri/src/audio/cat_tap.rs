@@ -6,6 +6,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, info, warn};
 
+use super::util::mix_to_mono;
+
 #[derive(Debug)]
 pub enum CaptureError {
     StreamError(String),
@@ -44,6 +46,7 @@ extern "C" {
     fn catap_is_available() -> i32;
     fn catap_macos_version(major: *mut u64, minor: *mut u64, patch: *mut u64);
     fn catap_probe_permission() -> i32;
+    fn catap_last_diagnostic() -> *const std::os::raw::c_char;
 }
 
 pub fn is_available() -> bool {
@@ -52,6 +55,19 @@ pub fn is_available() -> bool {
 
 pub fn probe_permission() -> bool {
     unsafe { catap_probe_permission() != 0 }
+}
+
+pub fn last_diagnostic() -> String {
+    unsafe {
+        let ptr = catap_last_diagnostic();
+        if ptr.is_null() {
+            String::new()
+        } else {
+            std::ffi::CStr::from_ptr(ptr)
+                .to_string_lossy()
+                .into_owned()
+        }
+    }
 }
 
 pub fn macos_version() -> (u64, u64, u64) {
@@ -101,19 +117,6 @@ extern "C" fn audio_callback(
     if let Err(e) = cb.sender.try_send(mono) {
         warn!("CATap audio channel full, dropping buffer: {e}");
     }
-}
-
-fn mix_to_mono(data: &[f32], channels: usize) -> Vec<f32> {
-    if channels <= 1 {
-        return data.to_vec();
-    }
-    let frames = data.len() / channels;
-    let mut mono = Vec::with_capacity(frames);
-    for frame in 0..frames {
-        let sum: f32 = (0..channels).map(|ch| data[frame * channels + ch]).sum();
-        mono.push(sum / channels as f32);
-    }
-    mono
 }
 
 pub struct CaTapHandle {
@@ -176,9 +179,13 @@ pub fn start() -> Result<(Receiver<Vec<f32>>, CaTapHandle), CaptureError> {
         unsafe {
             drop(Box::from_raw(cb_data_ptr));
         }
-        return Err(CaptureError::StreamError(format!(
-            "CATap AudioDeviceCreateIOProcID/Start failed with OSStatus {status}"
-        )));
+        let diagnostic = last_diagnostic();
+        let detail = if diagnostic.is_empty() {
+            format!("OSStatus {status}")
+        } else {
+            diagnostic
+        };
+        return Err(CaptureError::StreamError(detail));
     }
 
     info!("CATap system audio capture started (global stereo tap, mixed to mono)");

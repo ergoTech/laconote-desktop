@@ -136,11 +136,18 @@ fn check_microphone() -> PermissionState {
     extern "C" {
         fn check_mic_authorization() -> i32;
     }
-    if unsafe { check_mic_authorization() } == 1 {
+    let result = unsafe { check_mic_authorization() };
+    let state = if result == 1 {
         PermissionState::Granted
     } else {
         PermissionState::NotGranted
-    }
+    };
+    info!(raw_result = result, ?state, "check_microphone via check_mic_authorization");
+    state
+}
+
+pub fn check_microphone_public() -> bool {
+    check_microphone() == PermissionState::Granted
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -232,6 +239,17 @@ pub fn request_mic_permission() -> bool {
 pub fn request_mic_permission() -> bool {
     true
 }
+
+#[cfg(target_os = "macos")]
+pub fn request_mic_and_set_accessory() {
+    extern "C" {
+        fn request_mic_then_set_accessory();
+    }
+    unsafe { request_mic_then_set_accessory(); }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn request_mic_and_set_accessory() {}
 
 #[cfg(target_os = "macos")]
 pub fn request_system_audio_permission() -> bool {

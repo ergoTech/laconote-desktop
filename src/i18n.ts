@@ -14,6 +14,8 @@ export const t = {
     login: 'Log In',
     permissionError: 'Permission required',
     openSettings: 'Open System Settings',
+    sessionExpired: 'Session expired — please log in again.',
+    loginAgain: 'Log In Again',
   },
   status: {
     title: 'Recording',

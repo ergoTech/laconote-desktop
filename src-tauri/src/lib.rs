@@ -1,6 +1,8 @@
 pub mod audio;
 pub mod auth;
 mod commands;
+pub mod config;
+pub mod error;
 pub mod permissions;
 pub mod recording;
 mod tray;
@@ -39,119 +41,18 @@ pub fn run() {
 
             #[cfg(target_os = "macos")]
             {
-                app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                permissions::request_mic_and_set_accessory();
             }
 
             tray::setup_tray(&handle)?;
-
-            let auth_handle = handle.clone();
-            let dashboard_url: url::Url = "https://laconote.com/"
-                .parse()
-                .expect("Invalid dashboard URL");
-            tauri::WebviewWindowBuilder::new(
-                app,
-                "dashboard",
-                tauri::WebviewUrl::External(dashboard_url),
-            )
-            .title("Laconote")
-            .inner_size(1280.0, 800.0)
-            .min_inner_size(900.0, 600.0)
-            .resizable(true)
-            .visible(false)
-            .decorations(true)
-            .center()
-            .on_navigation(move |url| {
-                if url.scheme() == "laconote" {
-                    info!("Intercepted laconote:// URL in dashboard webview: {}", url);
-                    auth::deeplink::handle_deep_link(&auth_handle, url.as_str());
-                    return false;
-                }
-                true
-            })
-            .build()
-            .map_err(|e| {
-                warn!("Failed to create dashboard window: {e}");
-                e
-            })?;
-
-            let dl_handle = handle.clone();
-            app.deep_link().on_open_url(move |event| {
-                for url in event.urls() {
-                    auth::deeplink::handle_deep_link(&dl_handle, url.as_str());
-                }
-            });
-
-            // Handle URL when app is LAUNCHED by the deep link (not already running)
-            let initial_handle = handle.clone();
-            if let Ok(Some(urls)) = app.deep_link().get_current() {
-                for url in urls {
-                    auth::deeplink::handle_deep_link(&initial_handle, url.as_str());
-                }
-            }
-
+            setup_dashboard_window(app)?;
+            setup_deep_links(app, &handle)?;
             register_global_shortcut(&handle)?;
 
             #[cfg(target_os = "macos")]
-            {
-                shadow::cleanup::run_cleanup();
+            setup_scheduler(&handle);
 
-                let sched_handle = handle.clone();
-                let config = shadow::schedule::load_schedule_config(&sched_handle);
-                if config.enabled {
-                    let _scheduler = shadow::schedule::ShadowScheduler::start(&sched_handle);
-                    std::mem::forget(_scheduler);
-
-                    if shadow::schedule::is_within_window(&config, &chrono::Local::now()) {
-                        let auto_handle = sched_handle.clone();
-                        tauri::async_runtime::spawn(async move {
-                            let is_authed = crate::auth::keychain::get_token(&auto_handle)
-                                .map(|t| crate::auth::keychain::is_token_valid(&t))
-                                .unwrap_or(false);
-                            if is_authed {
-                                let state = auto_handle.state::<AppState>();
-                                let can_start = {
-                                    let no_rec = state.session.lock().map(|g| g.is_none()).unwrap_or(true);
-                                    let no_shadow = state.shadow_session.lock().map(|g| g.is_none()).unwrap_or(true);
-                                    no_rec && no_shadow
-                                };
-                                if can_start {
-                                    match shadow::ShadowSession::start(None, Some(config.buffer_minutes)) {
-                                        Ok(session) => {
-                                            {
-                                                let mut guard = state.shadow_session.lock().unwrap_or_else(|e| e.into_inner());
-                                                *guard = Some(session);
-                                            }
-                                            if let Ok(store) = tauri_plugin_store::StoreBuilder::new(&auto_handle, "app-settings.json").build() {
-                                                store.set("shadow_auto_started", true);
-                                            }
-                                            tray::set_tray_shadow(&auto_handle).ok();
-                                            tray::update_tray_menu(&auto_handle).ok();
-                                            tray::start_shadow_tray_updater(&auto_handle);
-                                            info!("Shadow recording auto-started on launch (within schedule window)");
-                                        }
-                                        Err(e) => {
-                                            warn!("Failed to auto-start shadow on launch: {e}");
-                                        }
-                                    }
-                                }
-                            }
-                        });
-                    }
-                }
-            }
-
-            let update_handle = handle.clone();
-            tauri::async_runtime::spawn(async move {
-                updater::check_for_updates_silent(&update_handle).await;
-
-                let mut interval =
-                    tokio::time::interval(std::time::Duration::from_secs(6 * 60 * 60));
-                interval.tick().await;
-                loop {
-                    interval.tick().await;
-                    updater::check_for_updates_silent(&update_handle).await;
-                }
-            });
+            setup_updater(&handle);
 
             info!("Laconote Desktop initialized");
             Ok(())
@@ -171,8 +72,10 @@ pub fn run() {
             commands::open_system_settings,
             commands::request_mic_permission,
             commands::probe_system_audio_capture,
+            commands::get_audio_diagnostic,
             commands::restart_app,
             commands::check_for_updates,
+            commands::log_dashboard_event,
             commands::start_shadow_recording,
             commands::stop_shadow_recording,
             commands::get_shadow_status,
@@ -183,6 +86,124 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Laconote Desktop");
+}
+
+fn setup_dashboard_window(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let handle = app.handle().clone();
+    let dashboard_url: url::Url = config::DASHBOARD_URL
+        .parse()
+        .expect("Invalid dashboard URL");
+    tauri::WebviewWindowBuilder::new(
+        app,
+        "dashboard",
+        tauri::WebviewUrl::External(dashboard_url),
+    )
+    .title("Laconote")
+    .inner_size(1280.0, 800.0)
+    .min_inner_size(900.0, 600.0)
+    .resizable(true)
+    .visible(false)
+    .decorations(true)
+    .center()
+    .initialization_script(include_str!("dashboard_diagnostics.js"))
+    .on_navigation(move |url| {
+        if url.scheme() == "laconote" {
+            info!("Intercepted laconote:// URL in dashboard webview: {}", url);
+            auth::deeplink::handle_deep_link(&handle, url.as_str());
+            return false;
+        }
+        true
+    })
+    .build()
+    .map_err(|e| {
+        warn!("Failed to create dashboard window: {e}");
+        e
+    })?;
+    Ok(())
+}
+
+fn setup_deep_links(
+    app: &tauri::App,
+    handle: &tauri::AppHandle,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let dl_handle = handle.clone();
+    app.deep_link().on_open_url(move |event| {
+        for url in event.urls() {
+            auth::deeplink::handle_deep_link(&dl_handle, url.as_str());
+        }
+    });
+
+    let initial_handle = handle.clone();
+    if let Ok(Some(urls)) = app.deep_link().get_current() {
+        for url in urls {
+            auth::deeplink::handle_deep_link(&initial_handle, url.as_str());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn setup_scheduler(handle: &tauri::AppHandle) {
+    shadow::cleanup::run_cleanup();
+
+    let sched_handle = handle.clone();
+    let config = shadow::schedule::load_schedule_config(&sched_handle);
+    if config.enabled {
+        let _scheduler = shadow::schedule::ShadowScheduler::start(&sched_handle);
+        std::mem::forget(_scheduler);
+
+        if shadow::schedule::is_within_window(&config, &chrono::Local::now()) {
+            let auto_handle = sched_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                let is_authed = crate::auth::keychain::get_token(&auto_handle)
+                    .map(|t| crate::auth::keychain::is_token_valid(&t))
+                    .unwrap_or(false);
+                if is_authed {
+                    let state = auto_handle.state::<AppState>();
+                    let can_start = {
+                        let no_rec = state.session.lock().map(|g| g.is_none()).unwrap_or(true);
+                        let no_shadow = state.shadow_session.lock().map(|g| g.is_none()).unwrap_or(true);
+                        no_rec && no_shadow
+                    };
+                    if can_start {
+                        match shadow::ShadowSession::start(None, Some(config.buffer_minutes)) {
+                            Ok(session) => {
+                                {
+                                    let mut guard = state.shadow_session.lock().unwrap_or_else(|e| e.into_inner());
+                                    *guard = Some(session);
+                                }
+                                if let Ok(store) = tauri_plugin_store::StoreBuilder::new(&auto_handle, "app-settings.json").build() {
+                                    store.set("shadow_auto_started", true);
+                                }
+                                tray::set_tray_shadow(&auto_handle).ok();
+                                tray::update_tray_menu(&auto_handle).ok();
+                                tray::start_shadow_tray_updater(&auto_handle);
+                                info!("Shadow recording auto-started on launch (within schedule window)");
+                            }
+                            Err(e) => {
+                                warn!("Failed to auto-start shadow on launch: {e}");
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    }
+}
+
+fn setup_updater(handle: &tauri::AppHandle) {
+    let update_handle = handle.clone();
+    tauri::async_runtime::spawn(async move {
+        updater::check_for_updates_silent(&update_handle).await;
+
+        let mut interval =
+            tokio::time::interval(std::time::Duration::from_secs(6 * 60 * 60));
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            updater::check_for_updates_silent(&update_handle).await;
+        }
+    });
 }
 
 fn register_global_shortcut<R: tauri::Runtime>(
@@ -281,9 +302,7 @@ fn register_global_shortcut<R: tauri::Runtime>(
                                 tray::set_tray_recording(&h, false).ok();
                                 tray::update_tray_menu(&h).ok();
                                 use tauri_plugin_opener::OpenerExt;
-                                let url = format!(
-                                    "https://laconote.com/meeting/{meeting_id}"
-                                );
+                                let url = config::meeting_url(&meeting_id);
                                 h.opener().open_url(&url, None::<&str>).ok();
                                 info!("Recording stopped via global shortcut");
                             }

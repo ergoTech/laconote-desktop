@@ -4,6 +4,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tracing::{error, info, warn};
 
+use super::util::mix_to_mono;
+
 #[derive(Debug)]
 pub enum MicError {
     NoDevice(String),
@@ -198,21 +200,6 @@ fn build_stream_config(device: &cpal::Device) -> Result<cpal::StreamConfig, MicE
         .default_input_config()
         .map(|c| c.into())
         .map_err(|e| MicError::StreamBuild(format!("No suitable input config: {e}")))
-}
-
-fn mix_to_mono(data: &[f32], channels: usize) -> Vec<f32> {
-    if channels == 1 {
-        return data.to_vec();
-    }
-    let frames = data.len() / channels;
-    let mut mono = Vec::with_capacity(frames);
-    for frame in 0..frames {
-        let sum: f32 = (0..channels)
-            .map(|ch| data[frame * channels + ch])
-            .sum();
-        mono.push(sum / channels as f32);
-    }
-    mono
 }
 
 #[cfg(test)]
