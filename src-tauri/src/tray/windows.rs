@@ -9,6 +9,9 @@ fn show_or_focus_window<R: Runtime>(app: &AppHandle<R>, label: &str) {
         {
             let w = window.clone();
             let _ = app.run_on_main_thread(move || {
+                extern "C" { fn set_regular_policy(); }
+                unsafe { set_regular_policy(); }
+
                 use objc2_app_kit::NSApplication;
                 use objc2_foundation::MainThreadMarker;
                 unsafe {

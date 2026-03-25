@@ -43,6 +43,15 @@ pub fn run() {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window.hide();
+
+                // Switch back to Accessory policy (hide dock icon) when window is hidden
+                #[cfg(target_os = "macos")]
+                {
+                    let _ = window.app_handle().run_on_main_thread(|| {
+                        extern "C" { fn set_accessory_policy(); }
+                        unsafe { set_accessory_policy(); }
+                    });
+                }
             }
         })
         .setup(|app| {

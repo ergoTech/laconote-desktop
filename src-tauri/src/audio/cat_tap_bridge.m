@@ -428,12 +428,18 @@ int request_mic_authorization_sync(void) {
 }
 
 /// Switches the app to Accessory activation policy (hides dock icon).
-/// Called from Rust after mic permission has been resolved.
 void set_accessory_policy(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
         NSLog(@"[Laconote] Switched to Accessory activation policy (dock icon hidden)");
     });
+}
+
+/// Switches the app to Regular activation policy (shows dock icon, can come to foreground).
+/// Called before showing a window so the app can properly activate.
+void set_regular_policy(void) {
+    [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+    NSLog(@"[Laconote] Switched to Regular activation policy (app can activate)");
 }
 
 void request_mic_then_set_accessory(void) {
