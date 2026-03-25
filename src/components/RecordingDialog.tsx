@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { getStore } from '../hooks/useStore';
 import { t, MEETING_TYPES, MeetingType } from '../i18n';
-import { PermissionOnboarding } from './PermissionOnboarding';
 import type { AudioDiagnostic, Project } from '../types';
 
 const API_BASE = 'https://meet.laconote.com';
@@ -195,13 +194,24 @@ export function RecordingDialog({ onAuthChange }: RecordingDialogProps = {}) {
     );
   }
 
-  if (showOnboarding) {
-    return <PermissionOnboarding onDone={() => setShowOnboarding(false)} />;
-  }
-
   return (
     <div className="view">
       <p className="view-title">{t.recording.title}</p>
+
+      {showOnboarding && (
+        <div style={{ background: 'var(--bg-warning, #fff3cd)', padding: '8px 12px', borderRadius: '8px', marginBottom: '8px', fontSize: '12px' }}>
+          <p style={{ margin: 0, fontWeight: 500 }}>{t.permissions.someNotGranted}</p>
+          <button
+            className="btn btn-secondary btn-xs"
+            style={{ marginTop: '6px' }}
+            onClick={() => {
+              invoke('open_system_settings', { pane: 'system_audio' }).catch(console.error);
+            }}
+          >
+            {t.permissions.openSettings}
+          </button>
+        </div>
+      )}
 
       <div className="field-group">
         <p className="label">{t.recording.meetingName}</p>

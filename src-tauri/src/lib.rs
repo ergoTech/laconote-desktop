@@ -43,7 +43,10 @@ pub fn run() {
 
             #[cfg(target_os = "macos")]
             {
-                permissions::request_mic_and_set_accessory();
+                // Just hide dock icon — don't request mic permission at startup.
+                // Mic will be requested when user actually starts recording.
+                extern "C" { fn set_accessory_policy(); }
+                unsafe { set_accessory_policy(); }
             }
 
             tray::setup_tray(&handle)?;
@@ -58,16 +61,19 @@ pub fn run() {
             calendar::scheduler::start_calendar_scheduler(&handle);
             meeting_detector::start_detector(&handle);
 
-            // Show dashboard on first launch or when not authenticated
+            // Don't auto-show dashboard — just notify user via tray.
+            // User clicks tray icon when ready.
             {
-                use tauri::Manager;
                 let token = auth::keychain::get_token(&handle);
                 if token.is_none() {
-                    info!("No auth token found — showing dashboard for login");
-                    if let Some(w) = handle.get_webview_window("dashboard") {
-                        let _ = w.show();
-                        let _ = w.set_focus();
-                    }
+                    info!("No auth token found — user can log in via tray icon");
+                    use tauri_plugin_notification::NotificationExt;
+                    let _ = handle
+                        .notification()
+                        .builder()
+                        .title("Laconote")
+                        .body("Click the menu bar icon to log in and start recording.")
+                        .show();
                 }
             }
 

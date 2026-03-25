@@ -36,9 +36,19 @@ pub fn setup_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
                 ..
             } = event
             {
+                use tauri::Manager;
                 let app = tray.app_handle();
                 debug!("Tray left-clicked");
-                let _ = crate::commands::open_dashboard(app.clone());
+                // Toggle: if dashboard visible → hide, otherwise → show
+                if let Some(window) = app.get_webview_window("dashboard") {
+                    if window.is_visible().unwrap_or(false) {
+                        let _ = window.hide();
+                    } else {
+                        let _ = crate::commands::open_dashboard(app.clone());
+                    }
+                } else {
+                    let _ = crate::commands::open_dashboard(app.clone());
+                }
             }
         })
         .build(app)?;

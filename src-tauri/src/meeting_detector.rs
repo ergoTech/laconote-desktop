@@ -1,10 +1,12 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::process::Command;
 use std::sync::Mutex;
+use std::time::Instant;
 use tauri::{AppHandle, Emitter, Runtime};
 use tracing::info;
 
 const CHECK_INTERVAL_SECS: u64 = 5;
+const NOTIFICATION_COOLDOWN_SECS: u64 = 1800; // 30 minutes
 const STORE_FILE: &str = "app-settings.json";
 
 /// Known meeting apps and their process names on macOS.
@@ -27,7 +29,7 @@ const BROWSER_MEETING_KEYWORDS: &[(&str, &str)] = &[
     ("discord.com/channels", "Discord"),
 ];
 
-static KNOWN_ACTIVE: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+static KNOWN_ACTIVE: Mutex<Option<HashMap<String, Instant>>> = Mutex::new(None);
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct MeetingDetected {
@@ -179,15 +181,19 @@ fn detect_browser_meeting() -> Option<MeetingDetected> {
 
 fn mark_if_new(app_name: &str) -> bool {
     let mut guard = KNOWN_ACTIVE.lock().unwrap_or_else(|e| e.into_inner());
-    let set = guard.get_or_insert_with(HashSet::new);
-    if set.contains(app_name) {
-        return false;
-    }
-    set.insert(app_name.to_string());
+    let map = guard.get_or_insert_with(HashMap::new);
 
-    // Prune after a while to re-detect if app restarts
-    if set.len() > 50 {
-        set.clear();
+    if let Some(last_notified) = map.get(app_name) {
+        if last_notified.elapsed().as_secs() < NOTIFICATION_COOLDOWN_SECS {
+            return false; // Still in cooldown
+        }
+    }
+
+    map.insert(app_name.to_string(), Instant::now());
+
+    // Prune old entries
+    if map.len() > 50 {
+        map.retain(|_, v| v.elapsed().as_secs() < NOTIFICATION_COOLDOWN_SECS);
     }
     true
 }
