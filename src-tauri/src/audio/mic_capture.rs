@@ -67,10 +67,13 @@ impl MicCaptureHandle {
 /// If `device_name` is `None`, the system default input device is used.
 /// Returns a channel [`Receiver`] of `Vec<f32>` PCM samples (48 kHz, mono, f32)
 /// and a [`MicCaptureHandle`] to stop the session.
-pub fn start(device_name: Option<String>) -> Result<(Receiver<Vec<f32>>, MicCaptureHandle), MicError> {
+/// Start capturing audio from the microphone.
+///
+/// Returns `(receiver, handle, actual_sample_rate)`.
+pub fn start(device_name: Option<String>) -> Result<(Receiver<Vec<f32>>, MicCaptureHandle, u32), MicError> {
     let (audio_tx, audio_rx) = bounded::<Vec<f32>>(256);
     let (stop_tx, stop_rx) = std::sync::mpsc::sync_channel::<()>(1);
-    let (init_tx, init_rx) = std::sync::mpsc::channel::<Result<(), MicError>>();
+    let (init_tx, init_rx) = std::sync::mpsc::channel::<Result<u32, MicError>>();
 
     let running = Arc::new(AtomicBool::new(true));
     let running_for_thread = Arc::clone(&running);
@@ -142,7 +145,7 @@ pub fn start(device_name: Option<String>) -> Result<(Receiver<Vec<f32>>, MicCapt
             }
 
             info!("Microphone capture started (device: {device_name_str})");
-            let _ = init_tx.send(Ok(()));
+            let _ = init_tx.send(Ok(config.sample_rate.0));
 
             let _ = stop_rx.recv();
             running_for_thread.store(false, Ordering::SeqCst);
@@ -153,7 +156,7 @@ pub fn start(device_name: Option<String>) -> Result<(Receiver<Vec<f32>>, MicCapt
         .map_err(|e| MicError::ThreadError(e.to_string()))?;
 
     match init_rx.recv() {
-        Ok(Ok(())) => Ok((audio_rx, MicCaptureHandle { running, stop_tx })),
+        Ok(Ok(sample_rate)) => Ok((audio_rx, MicCaptureHandle { running, stop_tx }, sample_rate)),
         Ok(Err(e)) => Err(e),
         Err(_) => Err(MicError::ThreadError(
             "Mic capture thread exited before initialization".into(),
@@ -232,7 +235,7 @@ mod tests {
     #[test]
     #[ignore = "requires a physical microphone input device"]
     fn test_mic_capture_starts_and_stops() {
-        let (rx, handle) = start(None).expect("Failed to start mic capture");
+        let (rx, handle, _sr) = start(None).expect("Failed to start mic capture");
 
         let mut received_buffers = 0usize;
         let deadline = std::time::Instant::now() + Duration::from_secs(3);

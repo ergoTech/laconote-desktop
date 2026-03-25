@@ -63,7 +63,7 @@ impl ShadowSession {
     ) -> Result<Self, String> {
         let minutes = buffer_minutes.unwrap_or(DEFAULT_BUFFER_MINUTES);
         let buffer = Arc::new(ShadowBuffer::new(minutes));
-        let (mic_rx, mic_handle) =
+        let (mic_rx, mic_handle, _mic_sr) =
             start_mic_capture(mic_device).map_err(|e| format!("Mic capture failed: {e}"))?;
 
         let worker_running = Arc::new(AtomicBool::new(true));

@@ -47,6 +47,7 @@ extern "C" {
     fn catap_macos_version(major: *mut u64, minor: *mut u64, patch: *mut u64);
     fn catap_probe_permission() -> i32;
     fn catap_last_diagnostic() -> *const std::os::raw::c_char;
+    fn catap_sample_rate() -> u32;
 }
 
 pub fn is_available() -> bool {
@@ -157,7 +158,7 @@ impl Drop for CaTapHandle {
     }
 }
 
-pub fn start() -> Result<(Receiver<Vec<f32>>, CaTapHandle), CaptureError> {
+pub fn start() -> Result<(Receiver<Vec<f32>>, CaTapHandle, u32), CaptureError> {
     if !is_available() {
         return Err(CaptureError::StreamError(
             "CATap requires macOS 14.2 or later".into(),
@@ -188,14 +189,15 @@ pub fn start() -> Result<(Receiver<Vec<f32>>, CaTapHandle), CaptureError> {
         return Err(CaptureError::StreamError(detail));
     }
 
-    info!("CATap system audio capture started (global stereo tap, mixed to mono)");
+    let sr = unsafe { catap_sample_rate() };
+    info!(sample_rate = sr, "CATap system audio capture started (global stereo tap, mixed to mono)");
 
-    Ok((audio_rx, CaTapHandle { running, cb_data_ptr }))
+    Ok((audio_rx, CaTapHandle { running, cb_data_ptr }, sr))
 }
 
 pub fn probe_capture_readiness(timeout: Duration) -> CaptureProbeResult {
     match start() {
-        Ok((audio_rx, handle)) => {
+        Ok((audio_rx, handle, _sr)) => {
             let result = match audio_rx.recv_timeout(timeout) {
                 Ok(samples) if !samples.is_empty() => CaptureProbeResult {
                     state: CaptureReadiness::Ready,

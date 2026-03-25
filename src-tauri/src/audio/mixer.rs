@@ -103,6 +103,9 @@ pub fn start(
             info!(
                 system_gain = config.system_gain,
                 mic_gain = config.mic_gain,
+                system_sample_rate = config.system_sample_rate,
+                mic_sample_rate = config.mic_sample_rate,
+                target_sample_rate = TARGET_SAMPLE_RATE,
                 "Audio mixer thread started"
             );
 

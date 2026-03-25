@@ -16,6 +16,7 @@ static AudioObjectID gAggregateDeviceID = kAudioObjectUnknown;
 static AudioDeviceIOProcID gIOProcID = NULL;
 static LacoCATapCallback gCallback = NULL;
 static void* gUserData = NULL;
+static uint32_t gSampleRate = 48000;
 
 static dispatch_queue_t gTapQueue = NULL;
 static BOOL gVersionLogged = NO;
@@ -189,6 +190,26 @@ int catap_start(LacoCATapCallback callback, void* user_data) {
             }
             NSLog(@"[Laconote CATap] Step 3/5: Aggregate device created, deviceID=%u", (unsigned)gAggregateDeviceID);
 
+            // Read actual sample rate from aggregate device
+            {
+                Float64 nominalSR = 0;
+                UInt32 srSize = sizeof(nominalSR);
+                AudioObjectPropertyAddress srAddr = {
+                    kAudioDevicePropertyNominalSampleRate,
+                    kAudioObjectPropertyScopeGlobal,
+                    kAudioObjectPropertyElementMain
+                };
+                OSStatus srStatus = AudioObjectGetPropertyData(gAggregateDeviceID, &srAddr, 0, NULL, &srSize, &nominalSR);
+                if (srStatus == noErr && nominalSR > 0) {
+                    gSampleRate = (uint32_t)nominalSR;
+                    NSLog(@"[Laconote CATap] Aggregate device sample rate: %.0f Hz", nominalSR);
+                } else {
+                    gSampleRate = 48000;
+                    NSLog(@"[Laconote CATap] Could not read aggregate device sample rate (%@), defaulting to 48000",
+                          describeOSStatus(srStatus));
+                }
+            }
+
             // Step 4: Create IOProc on aggregate device
             NSLog(@"[Laconote CATap] Step 4/5: Creating IOProc on aggregate device...");
             status = AudioDeviceCreateIOProcID(gAggregateDeviceID, ioProc, NULL, &gIOProcID);
@@ -265,6 +286,10 @@ void catap_stop(void) {
 
 int catap_is_available(void) {
     return isAtLeastMacOS14_2() ? 1 : 0;
+}
+
+uint32_t catap_sample_rate(void) {
+    return gSampleRate;
 }
 
 int catap_probe_permission(void) {

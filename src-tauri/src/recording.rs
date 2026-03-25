@@ -176,7 +176,7 @@ pub async fn start_session<R: tauri::Runtime>(
 
     // Step 4: Start CATap system audio capture (with retries)
     info!("Step 4/6: Starting CATap system audio capture");
-    let (sys_rx, system_handle) = {
+    let (sys_rx, system_handle, system_sr) = {
         let retry_delays = [0u64, 500, 1000];
         let mut last_err = String::new();
         let mut result = None;
@@ -209,7 +209,7 @@ pub async fn start_session<R: tauri::Runtime>(
 
     // Step 5: Start microphone capture
     info!("Step 5/6: Starting microphone capture");
-    let (mic_rx, mic_handle) = start_mic_capture(config.mic_device).map_err(|e| {
+    let (mic_rx, mic_handle, mic_sr) = start_mic_capture(config.mic_device).map_err(|e| {
         let e_str = e.to_string();
         if e_str.contains("permission") || e_str.contains("denied") {
             format!(
@@ -221,8 +221,14 @@ pub async fn start_session<R: tauri::Runtime>(
     })?;
 
     // Step 6: Start audio mixer and encoder pipeline
-    info!("Step 6/6: Starting audio mixer and encoder pipeline");
-    let (mixer_consumer, mixer_handle) = start_mixer(sys_rx, mic_rx, MixerConfig::default())
+    info!(system_sr, mic_sr, "Step 6/6: Starting audio mixer and encoder pipeline");
+    let mixer_config = MixerConfig {
+        system_gain: crate::audio::DEFAULT_SYSTEM_GAIN,
+        mic_gain: crate::audio::DEFAULT_MIC_GAIN,
+        system_sample_rate: system_sr,
+        mic_sample_rate: mic_sr,
+    };
+    let (mixer_consumer, mixer_handle) = start_mixer(sys_rx, mic_rx, mixer_config)
         .map_err(|e| format!("Audio mixer failed: {e}"))?;
 
     let uploader = Uploader::new(jwt)?;
