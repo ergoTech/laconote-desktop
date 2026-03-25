@@ -1,4 +1,5 @@
-import { t } from '../../i18n';
+import { useState } from 'react';
+import { t, getLanguage, setLanguage, AVAILABLE_LANGUAGES } from '../../i18n';
 
 interface GeneralTabProps {
   launchAtLogin: boolean;
@@ -6,6 +7,15 @@ interface GeneralTabProps {
 }
 
 export function GeneralTab({ launchAtLogin, onLaunchAtLoginToggle }: GeneralTabProps) {
+  const [lang, setLang] = useState(getLanguage());
+
+  const handleLanguageChange = (newLang: string) => {
+    setLang(newLang);
+    setLanguage(newLang);
+    // Force re-render of entire app to apply translations
+    window.location.reload();
+  };
+
   return (
     <>
       <div className="toggle-row">
@@ -16,6 +26,15 @@ export function GeneralTab({ launchAtLogin, onLaunchAtLoginToggle }: GeneralTabP
           checked={launchAtLogin}
           onChange={onLaunchAtLoginToggle}
         />
+      </div>
+
+      <div className="field-group">
+        <p className="label">{t.settings.language}</p>
+        <select value={lang} onChange={(e) => handleLanguageChange(e.target.value)}>
+          {AVAILABLE_LANGUAGES.map((l) => (
+            <option key={l.code} value={l.code}>{l.label}</option>
+          ))}
+        </select>
       </div>
 
       <div className="field-group">

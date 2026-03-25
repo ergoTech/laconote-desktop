@@ -1,5 +1,6 @@
 pub mod google;
 pub mod oauth_server;
+pub mod outlook;
 pub mod scheduler;
 
 use serde::{Deserialize, Serialize};

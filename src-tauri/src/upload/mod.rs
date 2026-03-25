@@ -1,4 +1,5 @@
 pub mod chunker;
+pub mod local_backup;
 pub mod offline;
 pub mod uploader;
 
