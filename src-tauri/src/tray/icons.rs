@@ -1,39 +1,28 @@
-use tauri::{image::Image, AppHandle, Manager, Runtime};
-use tracing::info;
+use tauri::{image::Image, AppHandle, Runtime};
+use tracing::{info, warn};
 
-pub fn load_icon<R: Runtime>(app: &AppHandle<R>, name: &str) -> tauri::Result<Image<'static>> {
-    let resource_dir = app.path().resource_dir().unwrap_or_default();
-    let icon_path = resource_dir.join("icons").join(format!("{}.png", name));
+static ICON_IDLE: &[u8] = include_bytes!("../../icons/tray-idle@2x.png");
+static ICON_RECORDING: &[u8] = include_bytes!("../../icons/tray-recording@2x.png");
+static ICON_SHADOW: &[u8] = include_bytes!("../../icons/tray-shadow@2x.png");
+static ICON_WARNING: &[u8] = include_bytes!("../../icons/tray-warning@2x.png");
 
-    if icon_path.exists() {
-        return Image::from_path(&icon_path);
-    }
-
-    let fallback_path = resource_dir.join("icons").join("32x32.png");
-    if fallback_path.exists() {
-        return Image::from_path(&fallback_path);
-    }
-
-    Ok(create_fallback_icon())
-}
-
-pub fn create_fallback_icon() -> Image<'static> {
-    let size = 16u32;
-    let mut pixels: Vec<u8> = Vec::with_capacity((size * size * 4) as usize);
-    for _ in 0..size * size {
-        pixels.push(128);
-        pixels.push(128);
-        pixels.push(128);
-        pixels.push(255);
-    }
-    Image::new_owned(pixels, size, size)
+pub fn load_icon<R: Runtime>(_app: &AppHandle<R>, name: &str) -> tauri::Result<Image<'static>> {
+    let bytes = match name {
+        "tray-idle" => ICON_IDLE,
+        "tray-recording" => ICON_RECORDING,
+        "tray-shadow" => ICON_SHADOW,
+        "tray-warning" => ICON_WARNING,
+        _ => {
+            warn!("Unknown tray icon name: {name}, falling back to idle");
+            ICON_IDLE
+        }
+    };
+    Image::from_bytes(bytes)
 }
 
 pub fn set_tray_warning<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     if let Some(tray) = app.tray_by_id("main-tray") {
-        let icon = load_icon(app, "tray-warning")
-            .or_else(|_| load_icon(app, "tray-idle"))
-            .unwrap_or_else(|_| create_fallback_icon());
+        let icon = load_icon(app, "tray-warning")?;
         tray.set_icon(Some(icon))?;
         info!("Tray icon updated: warning state");
     }
@@ -59,9 +48,7 @@ pub fn set_tray_recording<R: Runtime>(
 
 pub fn set_tray_shadow<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     if let Some(tray) = app.tray_by_id("main-tray") {
-        let icon = load_icon(app, "tray-shadow")
-            .or_else(|_| load_icon(app, "tray-idle"))
-            .unwrap_or_else(|_| create_fallback_icon());
+        let icon = load_icon(app, "tray-shadow")?;
         tray.set_icon(Some(icon))?;
         info!("Tray icon updated: shadow recording");
     }
