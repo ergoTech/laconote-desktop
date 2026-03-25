@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>Laconote needs this permission to capture system audio from meetings on your computer (Zoom, Meet, Teams, etc.). It only reads audio — it never captures your screen visually.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Laconote needs microphone access to record your voice during meetings.</string>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>Laconote needs this permission to capture system audio from meetings on your computer (Zoom, Meet, Teams, etc.).</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright © 2024 Laconote. All rights reserved.</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>com.laconote.desktop</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>laconote</string>
+            </array>
+        </dict>
+    </array>
+</dict>
+</plist>
