@@ -121,10 +121,26 @@ pub fn start_calendar_scheduler<R: Runtime + 'static>(app: &AppHandle<R>) {
             // Fetch upcoming events
             match google::fetch_upcoming_events(&tokens.access_token, LOOKAHEAD_MINUTES).await {
                 Ok(events) => {
+                    // Cache next meeting label for tray menu (sync, no async)
+                    let label = events.first().map(|ev| {
+                        let minutes = ev.minutes_until();
+                        let time_str = if minutes <= 0 {
+                            "now".to_string()
+                        } else if minutes == 1 {
+                            "in 1 min".to_string()
+                        } else {
+                            format!("in {} min", minutes)
+                        };
+                        let platform = ev.platform.as_ref().map(|p| format!(" ({:?})", p)).unwrap_or_default();
+                        format!("📅 {}{} — {}", ev.summary, platform, time_str)
+                    });
+                    crate::tray::menu::set_next_meeting_label(label);
+
                     process_events(&app, &events, &config);
                 }
                 Err(e) => {
                     warn!("Failed to fetch calendar events: {e}");
+                    crate::tray::menu::set_next_meeting_label(None);
                 }
             }
         }

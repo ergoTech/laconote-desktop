@@ -142,39 +142,21 @@ pub fn build_current_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<
     Ok(menu)
 }
 
-fn get_next_meeting_label<R: Runtime>(app: &AppHandle<R>) -> Option<String> {
-    let tokens = crate::calendar::scheduler::load_google_tokens(app)?;
-    let config = crate::calendar::scheduler::load_config(app);
-    if !config.enabled {
-        return None;
+// Next meeting label is cached by the calendar scheduler and stored here.
+// Menu build is sync and cannot do async HTTP calls.
+static NEXT_MEETING_LABEL: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+pub fn set_next_meeting_label(label: Option<String>) {
+    if let Ok(mut guard) = NEXT_MEETING_LABEL.lock() {
+        *guard = label;
     }
+}
 
-    // Use a blocking runtime to fetch events (menu builds are sync)
-    let rt = tokio::runtime::Handle::try_current().ok()?;
-    let events = rt
-        .block_on(crate::calendar::google::fetch_upcoming_events(
-            &tokens.access_token,
-            60,
-        ))
-        .ok()?;
-
-    let next = events.first()?;
-    let minutes = next.minutes_until();
-    let time_str = if minutes <= 0 {
-        "now".to_string()
-    } else if minutes == 1 {
-        "in 1 min".to_string()
-    } else {
-        format!("in {} min", minutes)
-    };
-
-    let platform = next
-        .platform
-        .as_ref()
-        .map(|p| format!(" ({:?})", p))
-        .unwrap_or_default();
-
-    Some(format!("📅 {}{} — {}", next.summary, platform, time_str))
+fn get_next_meeting_label<R: Runtime>(_app: &AppHandle<R>) -> Option<String> {
+    NEXT_MEETING_LABEL
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone())
 }
 
 pub fn update_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
