@@ -22,6 +22,27 @@ use tracing::{info, warn};
 
 pub fn run() {
     init_logging();
+
+    // Log panic details before abort — critical for diagnosing release crashes
+    std::panic::set_hook(Box::new(|panic_info| {
+        let payload = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
+            s.to_string()
+        } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "unknown panic".to_string()
+        };
+        let location = panic_info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_else(|| "unknown location".to_string());
+        tracing::error!(
+            panic_message = %payload,
+            panic_location = %location,
+            "PANIC — app will abort"
+        );
+    }));
+
     info!("Starting Laconote Desktop");
 
     tauri::Builder::default()
