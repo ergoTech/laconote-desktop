@@ -54,6 +54,19 @@ pub fn run() {
 
             setup_updater(&handle);
 
+            // Show dashboard on first launch or when not authenticated
+            {
+                use tauri::Manager;
+                let token = auth::keychain::get_token(&handle);
+                if token.is_none() {
+                    info!("No auth token found — showing dashboard for login");
+                    if let Some(w) = handle.get_webview_window("dashboard") {
+                        let _ = w.show();
+                        let _ = w.set_focus();
+                    }
+                }
+            }
+
             info!("Laconote Desktop initialized");
             Ok(())
         })

@@ -8,8 +8,11 @@ pub fn open_dashboard<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
     use tauri::Manager;
     info!("Opening dashboard");
     if let Some(window) = app.get_webview_window("dashboard") {
+        // Only navigate if not already on laconote.com — preserves recording state
         window
-            .eval(format!("window.location.href = '{DASHBOARD_URL}'"))
+            .eval(format!(
+                "if (!window.location.href.startsWith('https://laconote.com')) {{ window.location.href = '{DASHBOARD_URL}'; }}"
+            ))
             .map_err(|e| format!("Failed to navigate dashboard: {e}"))?;
         window.show().map_err(|e| format!("Failed to show dashboard: {e}"))?;
         window.unminimize().ok();
