@@ -1,5 +1,6 @@
 pub mod audio;
 pub mod auth;
+pub mod calendar;
 mod commands;
 pub mod config;
 pub mod error;
@@ -53,6 +54,7 @@ pub fn run() {
             setup_scheduler(&handle);
 
             setup_updater(&handle);
+            calendar::scheduler::start_calendar_scheduler(&handle);
 
             // Show dashboard on first launch or when not authenticated
             {
@@ -97,6 +99,12 @@ pub fn run() {
             commands::get_shadow_schedule,
             commands::set_shadow_schedule,
             commands::set_shadow_buffer_duration,
+            commands::get_calendar_status,
+            commands::connect_google_calendar,
+            commands::handle_calendar_callback,
+            commands::disconnect_calendar,
+            commands::set_calendar_config,
+            commands::get_upcoming_events,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Laconote Desktop");
