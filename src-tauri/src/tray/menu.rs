@@ -49,6 +49,14 @@ pub fn build_current_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<
 
     let app_name = MenuItem::with_id(app, "app-name", "Laconote", false, None::<&str>)?;
     menu.append(&app_name)?;
+
+    // Show next calendar event if available
+    if let Some(next_meeting) = get_next_meeting_label(app) {
+        let meeting_item =
+            MenuItem::with_id(app, "next-meeting", &next_meeting, false, None::<&str>)?;
+        menu.append(&meeting_item)?;
+    }
+
     menu.append(&PredefinedMenuItem::separator(app)?)?;
 
     #[cfg(target_os = "macos")]
@@ -132,6 +140,41 @@ pub fn build_current_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<
     menu.append(&quit)?;
 
     Ok(menu)
+}
+
+fn get_next_meeting_label<R: Runtime>(app: &AppHandle<R>) -> Option<String> {
+    let tokens = crate::calendar::scheduler::load_google_tokens(app)?;
+    let config = crate::calendar::scheduler::load_config(app);
+    if !config.enabled {
+        return None;
+    }
+
+    // Use a blocking runtime to fetch events (menu builds are sync)
+    let rt = tokio::runtime::Handle::try_current().ok()?;
+    let events = rt
+        .block_on(crate::calendar::google::fetch_upcoming_events(
+            &tokens.access_token,
+            60,
+        ))
+        .ok()?;
+
+    let next = events.first()?;
+    let minutes = next.minutes_until();
+    let time_str = if minutes <= 0 {
+        "now".to_string()
+    } else if minutes == 1 {
+        "in 1 min".to_string()
+    } else {
+        format!("in {} min", minutes)
+    };
+
+    let platform = next
+        .platform
+        .as_ref()
+        .map(|p| format!(" ({:?})", p))
+        .unwrap_or_default();
+
+    Some(format!("📅 {}{} — {}", next.summary, platform, time_str))
 }
 
 pub fn update_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {

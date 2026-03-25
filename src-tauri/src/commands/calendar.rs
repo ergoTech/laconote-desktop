@@ -106,3 +106,25 @@ pub async fn get_upcoming_events<R: Runtime>(
         .ok_or_else(|| "Calendar not connected".to_string())?;
     google::fetch_upcoming_events(&tokens.access_token, 60).await
 }
+
+#[tauri::command]
+pub fn get_detector_config<R: Runtime>(
+    app: AppHandle<R>,
+) -> crate::meeting_detector::DetectorConfig {
+    crate::meeting_detector::load_config(&app)
+}
+
+#[tauri::command]
+pub fn set_detector_config<R: Runtime>(
+    app: AppHandle<R>,
+    enabled: Option<bool>,
+    notify: Option<bool>,
+    auto_record: Option<bool>,
+) {
+    let mut config = crate::meeting_detector::load_config(&app);
+    if let Some(e) = enabled { config.enabled = e; }
+    if let Some(n) = notify { config.notify = n; }
+    if let Some(a) = auto_record { config.auto_record = a; }
+    crate::meeting_detector::save_config(&app, &config);
+    info!(?config, "Detector config updated");
+}

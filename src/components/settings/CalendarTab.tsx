@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useEffect, useState } from 'react';
+import { DetectorTab } from './DetectorTab';
 
 interface CalendarStatus {
   connected: boolean;
@@ -174,6 +175,10 @@ export function CalendarTab() {
           </button>
         </>
       )}
+
+      <div style={{ marginTop: '20px', borderTop: '1px solid var(--border, #e0e0e0)', paddingTop: '16px' }}>
+        <DetectorTab />
+      </div>
     </div>
   );
 }

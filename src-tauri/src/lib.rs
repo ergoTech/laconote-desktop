@@ -4,6 +4,7 @@ pub mod calendar;
 mod commands;
 pub mod config;
 pub mod error;
+pub mod meeting_detector;
 pub mod permissions;
 pub mod recording;
 mod tray;
@@ -55,6 +56,7 @@ pub fn run() {
 
             setup_updater(&handle);
             calendar::scheduler::start_calendar_scheduler(&handle);
+            meeting_detector::start_detector(&handle);
 
             // Show dashboard on first launch or when not authenticated
             {
@@ -104,6 +106,8 @@ pub fn run() {
             commands::disconnect_calendar,
             commands::set_calendar_config,
             commands::get_upcoming_events,
+            commands::get_detector_config,
+            commands::set_detector_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Laconote Desktop");
