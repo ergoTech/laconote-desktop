@@ -74,6 +74,10 @@ pub struct AppState {
 
     /// Prevents concurrent start_recording calls (race condition guard)
     pub starting: std::sync::atomic::AtomicBool,
+
+    /// Prevents concurrent shadow start calls (race condition guard)
+    #[cfg(target_os = "macos")]
+    pub shadow_starting: std::sync::atomic::AtomicBool,
 }
 
 impl Default for AppState {
@@ -88,6 +92,9 @@ impl Default for AppState {
             pending_meeting_id: Mutex::new(None),
 
             starting: std::sync::atomic::AtomicBool::new(false),
+
+            #[cfg(target_os = "macos")]
+            shadow_starting: std::sync::atomic::AtomicBool::new(false),
         }
     }
 }

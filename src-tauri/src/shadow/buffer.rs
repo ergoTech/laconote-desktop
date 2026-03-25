@@ -30,7 +30,7 @@ impl ShadowBuffer {
     }
 
     pub fn write(&self, samples: &[f32]) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let cap = self.capacity_samples;
         if cap == 0 || samples.is_empty() {
             return;
@@ -62,7 +62,7 @@ impl ShadowBuffer {
     }
 
     pub fn snapshot_and_clear(&self) -> Vec<f32> {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let result = self.read_ordered(&inner);
         inner.write_pos = 0;
         inner.count = 0;
@@ -70,12 +70,12 @@ impl ShadowBuffer {
     }
 
     pub fn drain(&self) -> Vec<f32> {
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         self.read_ordered(&inner)
     }
 
     pub fn duration_ms(&self) -> u64 {
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         (inner.count as u64 * 1000) / SAMPLE_RATE as u64
     }
 
@@ -87,7 +87,7 @@ impl ShadowBuffer {
         if self.capacity_samples == 0 {
             return 0;
         }
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         ((inner.count as u64 * 100) / self.capacity_samples as u64) as u8
     }
 

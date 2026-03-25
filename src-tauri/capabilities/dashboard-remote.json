@@ -7,6 +7,9 @@
         "urls": ["https://laconote.com/*", "https://*.laconote.com/*"]
     },
     "permissions": [
-        "core:default"
+        "core:default",
+        "notification:default",
+        "store:default",
+        "opener:default"
     ]
 }

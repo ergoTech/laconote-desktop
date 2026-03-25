@@ -25,7 +25,7 @@ pub fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, event_id: &str) {
                 {
                     let state = app_handle.state::<AppState>();
                     let session = {
-                        let mut guard = state.session.lock().unwrap();
+                        let mut guard = state.session.lock().unwrap_or_else(|e| e.into_inner());
                         guard.take()
                     };
                     if let Some(s) = session {

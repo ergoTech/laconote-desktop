@@ -96,9 +96,11 @@ pub async fn start_recording<R: Runtime>(
                 state.starting.store(false, std::sync::atomic::Ordering::SeqCst);
                 if e.contains("Not authenticated") || e.contains("Session expired") {
                     use tauri::Emitter;
-                    info!("Auth error during start_recording, clearing token");
+                    info!("Auth error during start_recording, clearing token and opening dashboard");
                     let _ = crate::auth::keychain::delete_token(&app);
                     let _ = app.emit("auth-changed", ());
+                    // Auto-open dashboard so user can re-login
+                    let _ = crate::commands::open_dashboard(app.clone());
                 }
                 e
             })?;

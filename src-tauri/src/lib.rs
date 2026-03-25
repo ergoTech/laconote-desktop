@@ -228,6 +228,11 @@ fn setup_scheduler(handle: &tauri::AppHandle) {
                     .unwrap_or(false);
                 if is_authed {
                     let state = auto_handle.state::<AppState>();
+                    // Atomic guard to prevent race condition with manual shadow start
+                    if state.shadow_starting.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                        info!("Shadow auto-start skipped: already starting");
+                        return;
+                    }
                     let can_start = {
                         let no_rec = state.session.lock().map(|g| g.is_none()).unwrap_or(true);
                         let no_shadow = state.shadow_session.lock().map(|g| g.is_none()).unwrap_or(true);
@@ -253,6 +258,7 @@ fn setup_scheduler(handle: &tauri::AppHandle) {
                             }
                         }
                     }
+                    state.shadow_starting.store(false, std::sync::atomic::Ordering::SeqCst);
                 }
             });
         }
@@ -361,7 +367,7 @@ fn register_global_shortcut<R: tauri::Runtime>(
                         {
                             let st = h.state::<AppState>();
                             let session = {
-                                let mut guard = st.session.lock().unwrap();
+                                let mut guard = st.session.lock().unwrap_or_else(|e| e.into_inner());
                                 guard.take()
                             };
                             if let Some(s) = session {

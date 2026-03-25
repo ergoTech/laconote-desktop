@@ -174,13 +174,19 @@
       });
 
       // Check initial recording state RIGHT NOW (on page load/refresh)
-      window.__TAURI_INTERNALS__.invoke('get_recording_status').then(function(status) {
-        window.__LACONOTE_RECORDING_STATUS__ = status;
-        window.dispatchEvent(new CustomEvent('laconote-recording-state', { detail: status }));
-        if (status.is_recording) {
-          logToBackend('[diagnostics] Page loaded with active recording: ' + status.duration_seconds + 's');
-        }
-      }).catch(function() {});
+      // Poll quickly at first to minimize the gap where UI shows wrong state
+      function syncRecordingState() {
+        window.__TAURI_INTERNALS__.invoke('get_recording_status').then(function(status) {
+          window.__LACONOTE_RECORDING_STATUS__ = status;
+          window.dispatchEvent(new CustomEvent('laconote-recording-state', { detail: status }));
+          if (status.is_recording) {
+            logToBackend('[diagnostics] Page loaded with active recording: ' + status.duration_seconds + 's');
+          }
+        }).catch(function() {});
+      }
+      syncRecordingState();
+      // Re-check after 500ms to catch any state that wasn't ready on initial load
+      setTimeout(syncRecordingState, 500);
 
       logToBackend('[diagnostics] Recording state sync registered');
     } catch(e) {
@@ -190,7 +196,7 @@
 
   // Notify the web app that desktop integration is available
   window.dispatchEvent(new CustomEvent('laconote-desktop-ready', {
-    detail: { version: '0.1.6', features: ['calendar', 'recording', 'detector'] }
+    detail: { version: '0.1.7', features: ['calendar', 'recording', 'detector'] }
   }));
 
   logToBackend('[diagnostics] Dashboard diagnostics script loaded');
