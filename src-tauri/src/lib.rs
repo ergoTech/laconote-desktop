@@ -81,6 +81,7 @@ pub fn run() {
             commands::start_recording,
             commands::stop_recording,
             commands::list_audio_devices,
+            commands::get_audio_levels,
             commands::check_permissions,
             commands::open_system_settings,
             commands::request_mic_permission,

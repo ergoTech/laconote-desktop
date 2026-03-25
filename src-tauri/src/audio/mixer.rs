@@ -1,12 +1,13 @@
-use crossbeam_channel::{select, Receiver};
+use crossbeam_channel::{select, bounded, Receiver};
 use ringbuf::{
     traits::{Producer, Split},
     HeapRb,
 };
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
 pub const DEFAULT_SYSTEM_GAIN: f32 = 0.8;
@@ -15,6 +16,14 @@ pub const DEFAULT_MIC_GAIN: f32 = 1.0;
 const RING_CAPACITY: usize = 48_000 * 5;
 const TARGET_SAMPLE_RATE: u32 = 48_000;
 const MAX_DEQUE_SAMPLES: usize = 48_000 * 2;
+const LEVEL_EMIT_INTERVAL: Duration = Duration::from_millis(100);
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AudioLevels {
+    pub system_rms: f32,
+    pub mic_rms: f32,
+    pub mixed_rms: f32,
+}
 
 pub type MixerConsumer = ringbuf::HeapCons<f32>;
 
@@ -86,13 +95,22 @@ fn soft_limit(sample: f32) -> f32 {
 /// applies per-source gain, mixes with a tanh soft-limiter, and writes the result
 /// into a lock-free ring buffer. Returns the consumer side of the ring buffer
 /// (for the encoder) and a [`MixerHandle`] to stop the mixer.
+fn compute_rms(samples: &[f32]) -> f32 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    let sum_sq: f32 = samples.iter().map(|s| s * s).sum();
+    (sum_sq / samples.len() as f32).sqrt()
+}
+
 pub fn start(
     system_rx: Receiver<Vec<f32>>,
     mic_rx: Receiver<Vec<f32>>,
     config: MixerConfig,
-) -> Result<(MixerConsumer, MixerHandle), String> {
+) -> Result<(MixerConsumer, MixerHandle, Receiver<AudioLevels>), String> {
     let rb = HeapRb::<f32>::new(RING_CAPACITY);
     let (mut prod, cons): (ringbuf::HeapProd<f32>, ringbuf::HeapCons<f32>) = rb.split();
+    let (levels_tx, levels_rx) = bounded::<AudioLevels>(8);
 
     let running = Arc::new(AtomicBool::new(true));
     let running_thread = Arc::clone(&running);
@@ -142,6 +160,11 @@ pub fn start(
                 }
             };
 
+            let mut last_level_emit = Instant::now();
+            let mut sys_rms_acc: Vec<f32> = Vec::new();
+            let mut mic_rms_acc: Vec<f32> = Vec::new();
+            let mut mixed_rms_acc: Vec<f32> = Vec::new();
+
             while running_thread.load(Ordering::Relaxed) {
                 select! {
                     recv(system_rx) -> msg => {
@@ -187,7 +210,24 @@ pub fn start(
                         if prod.try_push(mixed).is_err() {
                             warn!("Mixer ring buffer full, dropping sample");
                         }
+                        sys_rms_acc.push(sys_sample);
+                        mic_rms_acc.push(mic_sample);
+                        mixed_rms_acc.push(mixed);
                     }
+                }
+
+                // Emit audio levels every ~100ms
+                if last_level_emit.elapsed() >= LEVEL_EMIT_INTERVAL {
+                    let levels = AudioLevels {
+                        system_rms: compute_rms(&sys_rms_acc),
+                        mic_rms: compute_rms(&mic_rms_acc),
+                        mixed_rms: compute_rms(&mixed_rms_acc),
+                    };
+                    let _ = levels_tx.try_send(levels);
+                    sys_rms_acc.clear();
+                    mic_rms_acc.clear();
+                    mixed_rms_acc.clear();
+                    last_level_emit = Instant::now();
                 }
             }
 
@@ -195,7 +235,7 @@ pub fn start(
         })
         .map_err(|e| e.to_string())?;
 
-    Ok((cons, MixerHandle { running }))
+    Ok((cons, MixerHandle { running }, levels_rx))
 }
 
 #[cfg(test)]
@@ -267,7 +307,7 @@ mod tests {
         let (mic_tx, mic_rx) = bounded::<Vec<f32>>(64);
 
         let config = MixerConfig::default();
-        let (mut cons, handle) = start(sys_rx, mic_rx, config).expect("mixer start failed");
+        let (mut cons, handle, _levels_rx) = start(sys_rx, mic_rx, config).expect("mixer start failed");
 
         let sys_signal = vec![0.5_f32; 100];
         let mic_signal = vec![0.3_f32; 100];
@@ -311,7 +351,7 @@ mod tests {
         let (mic_tx, mic_rx) = bounded::<Vec<f32>>(64);
 
         let config = MixerConfig::default();
-        let (mut cons, handle) = start(sys_rx, mic_rx, config).expect("mixer start failed");
+        let (mut cons, handle, _levels_rx) = start(sys_rx, mic_rx, config).expect("mixer start failed");
 
         let sample_count = 480;
         let f1 = 440.0_f32;
@@ -368,7 +408,7 @@ mod tests {
         let (_sys_tx, sys_rx) = bounded::<Vec<f32>>(4);
         let (_mic_tx, mic_rx) = bounded::<Vec<f32>>(4);
 
-        let (_, handle) = start(sys_rx, mic_rx, MixerConfig::default()).expect("mixer start failed");
+        let (_, handle, _levels_rx) = start(sys_rx, mic_rx, MixerConfig::default()).expect("mixer start failed");
         assert!(handle.is_running());
         handle.stop();
     }
@@ -379,7 +419,7 @@ mod tests {
         let (mic_tx, mic_rx) = bounded::<Vec<f32>>(64);
 
         let config = MixerConfig::default();
-        let (mut cons, handle) = start(sys_rx, mic_rx, config).expect("mixer start failed");
+        let (mut cons, handle, _levels_rx) = start(sys_rx, mic_rx, config).expect("mixer start failed");
 
         let mic_signal = vec![0.5_f32; 200];
         mic_tx.send(mic_signal).unwrap();

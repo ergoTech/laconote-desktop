@@ -228,8 +228,20 @@ pub async fn start_session<R: tauri::Runtime>(
         system_sample_rate: system_sr,
         mic_sample_rate: mic_sr,
     };
-    let (mixer_consumer, mixer_handle) = start_mixer(sys_rx, mic_rx, mixer_config)
+    let (mixer_consumer, mixer_handle, levels_rx) = start_mixer(sys_rx, mic_rx, mixer_config)
         .map_err(|e| format!("Audio mixer failed: {e}"))?;
+
+    // Emit audio levels to frontend for visualization
+    let app_for_levels = app.clone();
+    std::thread::Builder::new()
+        .name("laconote-audio-levels".into())
+        .spawn(move || {
+            use tauri::Emitter;
+            while let Ok(levels) = levels_rx.recv() {
+                let _ = app_for_levels.emit("audio-levels", &levels);
+            }
+        })
+        .ok();
 
     let uploader = Uploader::new(jwt)?;
     let offline_queue = OfflineQueue::new()?;

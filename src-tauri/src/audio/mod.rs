@@ -32,7 +32,7 @@ pub use mic_capture::{
 
 #[cfg(target_os = "macos")]
 pub use mixer::{
-    start as start_mixer, MixerConfig, MixerConsumer, MixerHandle,
+    start as start_mixer, AudioLevels, MixerConfig, MixerConsumer, MixerHandle,
     DEFAULT_MIC_GAIN, DEFAULT_SYSTEM_GAIN,
 };
 

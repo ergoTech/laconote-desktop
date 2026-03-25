@@ -71,5 +71,29 @@
     logToBackend('[unhandledrejection] ' + String(e.reason).substring(0, 500));
   });
 
+  // Forward native audio levels to web app for visualization.
+  // The Rust backend emits "audio-levels" events with { system_rms, mic_rms, mixed_rms }.
+  // We expose this as a CustomEvent on window so the web app can listen:
+  //   window.addEventListener('laconote-audio-levels', (e) => { ... e.detail ... })
+  // Also store the latest value on window.__LACONOTE_AUDIO_LEVELS__ for polling.
+  (function setupAudioLevelsForwarding() {
+    if (!window.__TAURI_INTERNALS__) return;
+    try {
+      var cb = window.__TAURI_INTERNALS__.transformCallback(function(event) {
+        var payload = event.payload || event;
+        window.__LACONOTE_AUDIO_LEVELS__ = payload;
+        window.dispatchEvent(new CustomEvent('laconote-audio-levels', { detail: payload }));
+      });
+      window.__TAURI_INTERNALS__.invoke('plugin:event|listen', {
+        event: 'audio-levels',
+        target: { kind: 'Any' },
+        handler: cb
+      });
+      logToBackend('[diagnostics] Audio levels forwarding registered');
+    } catch(e) {
+      logToBackend('[diagnostics] Audio levels forwarding failed: ' + e.message);
+    }
+  })();
+
   logToBackend('[diagnostics] Dashboard diagnostics script loaded');
 })();

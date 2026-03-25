@@ -175,3 +175,14 @@ pub fn list_audio_devices() -> Vec<String> {
     #[allow(unreachable_code)]
     Vec::new()
 }
+
+#[tauri::command]
+pub fn get_audio_levels() -> crate::audio::AudioLevels {
+    // Returns zero levels — actual levels come via "audio-levels" event.
+    // This command exists as a fallback for external webviews that can't listen to events.
+    crate::audio::AudioLevels {
+        system_rms: 0.0,
+        mic_rms: 0.0,
+        mixed_rms: 0.0,
+    }
+}
