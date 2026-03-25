@@ -145,14 +145,29 @@ fn detect_meeting_apps() -> Vec<MeetingDetected> {
 }
 
 fn detect_browser_meeting() -> Option<MeetingDetected> {
-    // Check Chrome/Safari/Arc active tab URLs via AppleScript
+    // Check browser active tab URLs via AppleScript.
+    // IMPORTANT: Only query browsers that are ALREADY RUNNING.
+    // "tell application X" launches the app if not running!
     let browsers = [
-        ("Google Chrome", "tell application \"Google Chrome\" to get URL of active tab of front window"),
-        ("Safari", "tell application \"Safari\" to get URL of front document"),
-        ("Arc", "tell application \"Arc\" to get URL of active tab of front window"),
+        ("Google Chrome", "Google Chrome", "tell application \"Google Chrome\" to get URL of active tab of front window"),
+        ("Safari", "Safari", "tell application \"Safari\" to get URL of front document"),
+        ("Arc", "Arc", "tell application \"Arc\" to get URL of active tab of front window"),
     ];
 
-    for (browser, script) in browsers {
+    // Get list of running apps first
+    let running_apps = Command::new("osascript")
+        .args(["-e", "tell application \"System Events\" to get name of every process whose background only is false"])
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+
+    for (browser, process_name, script) in browsers {
+        // Skip if browser is not running — avoids launching it
+        if !running_apps.contains(process_name) {
+            continue;
+        }
+
         let Ok(output) = Command::new("osascript")
             .args(["-e", script])
             .output()
