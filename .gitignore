@@ -10,3 +10,4 @@ src-tauri/gen/
 .env.local
 tauri-signing.key
 *.key
+client_secret_*.json
