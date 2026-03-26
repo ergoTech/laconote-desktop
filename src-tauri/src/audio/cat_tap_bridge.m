@@ -429,10 +429,8 @@ int request_mic_authorization_sync(void) {
 
 /// Switches the app to Accessory activation policy (hides dock icon).
 void set_accessory_policy(void) {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
-        NSLog(@"[Laconote] Switched to Accessory activation policy (dock icon hidden)");
-    });
+    [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+    NSLog(@"[Laconote] Switched to Accessory activation policy (dock icon hidden)");
 }
 
 /// Switches the app to Regular activation policy (shows dock icon, can come to foreground).
