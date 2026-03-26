@@ -185,20 +185,10 @@ fn select_device(host: &cpal::Host, device_name: Option<&str>) -> Result<cpal::D
 }
 
 fn build_stream_config(device: &cpal::Device) -> Result<cpal::StreamConfig, MicError> {
-    let supported = device
-        .supported_input_configs()
-        .map_err(|e| MicError::StreamBuild(e.to_string()))?;
-
-    let target_rate = cpal::SampleRate(48_000);
-
-    let best = supported
-        .filter(|c| c.sample_format() == cpal::SampleFormat::F32)
-        .find(|c| c.min_sample_rate() <= target_rate && target_rate <= c.max_sample_rate());
-
-    if let Some(range) = best {
-        return Ok(range.with_sample_rate(target_rate).into());
-    }
-
+    // Use the device's preferred/default configuration to avoid changing hardware
+    // settings. Forcing a specific sample rate (e.g. 48 kHz) can cause macOS to
+    // renegotiate the device, degrading audio for other apps (e.g. Google Meet).
+    // The mixer will resample from the native rate to 48 kHz in software.
     device
         .default_input_config()
         .map(|c| c.into())

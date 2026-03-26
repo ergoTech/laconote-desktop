@@ -186,8 +186,26 @@ pub async fn start_session<R: tauri::Runtime>(
 
     crate::permissions::invalidate_catap_probe_cache();
 
-    // Step 4: Start CATap system audio capture (with retries)
-    info!("Step 4/6: Starting CATap system audio capture");
+    // Step 4: Start microphone capture FIRST.
+    // Opening the mic before creating the CATap aggregate device avoids
+    // disrupting the CoreAudio device graph while the mic is already in use
+    // by other apps (e.g. Google Meet via WebRTC).
+    info!("Step 4/6: Starting microphone capture");
+    let (mic_rx, mic_handle, mic_sr) = start_mic_capture(config.mic_device).map_err(|e| {
+        let e_str = e.to_string();
+        if e_str.contains("permission") || e_str.contains("denied") {
+            format!(
+                "Microphone access denied. Open System Settings → Privacy & Security → Microphone and enable Laconote."
+            )
+        } else {
+            format!("Microphone capture failed: {e}")
+        }
+    })?;
+
+    // Step 5: Start CATap system audio capture (with retries).
+    // Done after mic so the aggregate device creation doesn't interfere
+    // with microphone negotiation for other apps.
+    info!("Step 5/6: Starting CATap system audio capture");
     let (sys_rx, system_handle, system_sr) = {
         let retry_delays = [0u64, 500, 1000];
         let mut last_err = String::new();
@@ -219,19 +237,6 @@ pub async fn start_session<R: tauri::Runtime>(
         })?
     };
 
-    // Step 5: Start microphone capture
-    info!("Step 5/6: Starting microphone capture");
-    let (mic_rx, mic_handle, mic_sr) = start_mic_capture(config.mic_device).map_err(|e| {
-        let e_str = e.to_string();
-        if e_str.contains("permission") || e_str.contains("denied") {
-            format!(
-                "Microphone access denied. Open System Settings → Privacy & Security → Microphone and enable Laconote."
-            )
-        } else {
-            format!("Microphone capture failed: {e}")
-        }
-    })?;
-
     // Step 6: Start audio mixer and encoder pipeline
     info!(system_sr, mic_sr, "Step 6/6: Starting audio mixer and encoder pipeline");
     let mixer_config = MixerConfig {
@@ -249,8 +254,19 @@ pub async fn start_session<R: tauri::Runtime>(
         .name("laconote-audio-levels".into())
         .spawn(move || {
             use tauri::Emitter;
+            let mut counter: u64 = 0;
             while let Ok(levels) = levels_rx.recv() {
                 let _ = app_for_levels.emit("audio-levels", &levels);
+                counter += 1;
+                // Log every ~5 seconds (levels arrive at 10 Hz)
+                if counter % 50 == 0 {
+                    tracing::info!(
+                        system_rms = %format!("{:.4}", levels.system_rms),
+                        mic_rms = %format!("{:.4}", levels.mic_rms),
+                        mixed_rms = %format!("{:.4}", levels.mixed_rms),
+                        "Audio levels snapshot"
+                    );
+                }
             }
         })
         .ok();

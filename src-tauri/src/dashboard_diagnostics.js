@@ -79,10 +79,18 @@
   (function setupAudioLevelsForwarding() {
     if (!window.__TAURI_INTERNALS__) return;
     try {
+      var levelLogCounter = 0;
       var cb = window.__TAURI_INTERNALS__.transformCallback(function(event) {
         var payload = event.payload || event;
         window.__LACONOTE_AUDIO_LEVELS__ = payload;
         window.dispatchEvent(new CustomEvent('laconote-audio-levels', { detail: payload }));
+        // Periodic debug logging to verify system audio reaches the web app
+        levelLogCounter++;
+        if (levelLogCounter % 50 === 0) {
+          logToBackend('[audio-levels] sys=' + (payload.system_rms || 0).toFixed(4)
+            + ' mic=' + (payload.mic_rms || 0).toFixed(4)
+            + ' mix=' + (payload.mixed_rms || 0).toFixed(4));
+        }
       });
       window.__TAURI_INTERNALS__.invoke('plugin:event|listen', {
         event: 'audio-levels',
