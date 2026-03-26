@@ -11,7 +11,6 @@ mod tray;
 pub mod updater;
 #[cfg(target_os = "macos")]
 pub mod shadow;
-#[cfg(target_os = "macos")]
 pub mod upload;
 
 use recording::AppState;
@@ -346,7 +345,7 @@ fn register_global_shortcut<R: tauri::Runtime>(
             if event.state() == ShortcutState::Pressed {
                 let state = shortcut_handle.state::<AppState>();
                 let is_recording = {
-                    #[cfg(target_os = "macos")]
+                    #[cfg(any(target_os = "macos", target_os = "windows"))]
                     {
                         state
                             .session
@@ -356,14 +355,14 @@ fn register_global_shortcut<R: tauri::Runtime>(
                             })
                             .unwrap_or(false)
                     }
-                    #[cfg(not(target_os = "macos"))]
+                    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
                     false
                 };
 
                 if is_recording {
                     let h = shortcut_handle.clone();
                     tauri::async_runtime::spawn(async move {
-                        #[cfg(target_os = "macos")]
+                        #[cfg(any(target_os = "macos", target_os = "windows"))]
                         {
                             let st = h.state::<AppState>();
                             let session = {
@@ -416,11 +415,21 @@ fn init_logging() {
 }
 
 fn dirs_next_log_dir() -> std::path::PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    let log_dir = std::path::PathBuf::from(home)
-        .join("Library")
-        .join("Logs")
-        .join("com.laconote.desktop");
+    let log_dir = if cfg!(target_os = "macos") {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        std::path::PathBuf::from(home)
+            .join("Library")
+            .join("Logs")
+            .join("com.laconote.desktop")
+    } else if cfg!(target_os = "windows") {
+        let appdata = std::env::var("LOCALAPPDATA")
+            .unwrap_or_else(|_| std::env::var("TEMP").unwrap_or_else(|_| "C:\\Temp".to_string()));
+        std::path::PathBuf::from(appdata)
+            .join("com.laconote.desktop")
+            .join("logs")
+    } else {
+        std::path::PathBuf::from("/tmp").join("com.laconote.desktop")
+    };
     std::fs::create_dir_all(&log_dir).ok();
     log_dir
 }

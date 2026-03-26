@@ -3,9 +3,12 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
+#[cfg(target_os = "macos")]
 static CATAP_PROBE_CACHE: Mutex<Option<(Instant, bool)>> = Mutex::new(None);
+#[cfg(target_os = "macos")]
 const CATAP_PROBE_TTL: Duration = Duration::from_secs(10);
 
+#[cfg(target_os = "macos")]
 fn cached_catap_probe() -> bool {
     let mut cache = CATAP_PROBE_CACHE.lock().unwrap_or_else(|e| e.into_inner());
     if let Some((ts, result)) = *cache {
@@ -19,10 +22,14 @@ fn cached_catap_probe() -> bool {
     result
 }
 
+#[cfg(target_os = "macos")]
 pub fn invalidate_catap_probe_cache() {
     let mut cache = CATAP_PROBE_CACHE.lock().unwrap_or_else(|e| e.into_inner());
     *cache = None;
 }
+
+#[cfg(not(target_os = "macos"))]
+pub fn invalidate_catap_probe_cache() {}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]

@@ -20,10 +20,10 @@ pub async fn start_recording<R: Runtime>(
     project_id: Option<String>,
     mic_device: Option<String>,
 ) -> Result<String, String> {
-    #[cfg(not(target_os = "macos"))]
-    return Err("Recording is only supported on macOS".to_string());
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    return Err("Recording is not supported on this platform".to_string());
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
         // Atomic guard: prevent concurrent start_recording calls
         if state.starting.swap(true, std::sync::atomic::Ordering::SeqCst) {
@@ -45,6 +45,7 @@ pub async fn start_recording<R: Runtime>(
             }
         }
 
+        #[cfg(target_os = "macos")]
         {
             let guard = state
                 .shadow_session
@@ -139,10 +140,10 @@ pub async fn stop_recording<R: Runtime>(
     app: AppHandle<R>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
-    #[cfg(not(target_os = "macos"))]
-    return Err("Recording is only supported on macOS".to_string());
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    return Err("Recording is not supported on this platform".to_string());
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
         let session = {
             let mut guard = state
@@ -180,7 +181,7 @@ pub async fn stop_recording<R: Runtime>(
 
 #[tauri::command]
 pub fn get_recording_status(state: State<'_, AppState>) -> RecordingStatus {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
         let guard = state.session.lock().unwrap_or_else(|e| e.into_inner());
         return match &*guard {
@@ -207,7 +208,7 @@ pub fn get_recording_status(state: State<'_, AppState>) -> RecordingStatus {
 
 #[tauri::command]
 pub fn list_audio_devices() -> Vec<String> {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
         return crate::audio::list_mic_devices();
     }
